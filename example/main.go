@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/emmybxt/gocontroller/gocontroller"
+	"github.com/emmybxt/go-controller/gocontroller"
 )
 
 type SomethingService struct{}

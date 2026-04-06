@@ -1,4 +1,4 @@
-module github.com/emmybxt/gocontroller
+module github.com/emmybxt/go-controller
 
 go 1.22
 

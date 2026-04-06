@@ -206,7 +206,7 @@ func generateCode(pkg string, controllers []controllerInfo) string {
 	b.WriteString("package ")
 	b.WriteString(pkg)
 	b.WriteString("\n\n")
-	b.WriteString("import \"github.com/emmybxt/gocontroller/gocontroller\"\n\n")
+	b.WriteString("import \"github.com/emmybxt/go-controller/gocontroller\"\n\n")
 	b.WriteString("func init() {\n")
 	for _, c := range controllers {
 		b.WriteString("\tgocontroller.RegisterGeneratedControllerMetadata((*")

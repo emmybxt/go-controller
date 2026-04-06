@@ -26,7 +26,7 @@ Go frameworks are powerful, but many teams want a predictable architecture where
 ## Installation
 
 ```bash
-go get github.com/mac/gocontroller
+go get github.com/emmybxt/go-controller
 ```
 
 ## Quick Start (5 minutes)
@@ -37,7 +37,7 @@ package main
 import (
     "net/http"
 
-    "github.com/mac/gocontroller/gocontroller"
+    "github.com/emmybxt/go-controller/gocontroller"
 )
 
 type HealthController struct{}

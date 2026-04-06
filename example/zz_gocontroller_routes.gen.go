@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/emmybxt/gocontroller/gocontroller"
+import "github.com/emmybxt/go-controller/gocontroller"
 
 func init() {
 	gocontroller.RegisterGeneratedControllerMetadata((*SomethingController)(nil), gocontroller.ControllerMetadata{
