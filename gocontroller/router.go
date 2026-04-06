@@ -69,6 +69,14 @@ func (r *Router) DELETE(path string, handler HandlerFunc, middleware ...Middlewa
 	r.add(http.MethodDelete, path, handler, middleware...)
 }
 
+func (r *Router) PATCH(path string, handler HandlerFunc, middleware ...Middleware) {
+	r.add(http.MethodPatch, path, handler, middleware...)
+}
+
+func (r *Router) OPTIONS(path string, handler HandlerFunc, middleware ...Middleware) {
+	r.add(http.MethodOptions, path, handler, middleware...)
+}
+
 func (r *Router) add(method, path string, handler HandlerFunc, middleware ...Middleware) {
 	p := cleanPath(path)
 	r.routes = append(r.routes, route{
@@ -146,6 +154,14 @@ func (g *RouteGroup) PUT(path string, handler HandlerFunc, middleware ...Middlew
 
 func (g *RouteGroup) DELETE(path string, handler HandlerFunc, middleware ...Middleware) {
 	g.router.DELETE(g.combine(path), handler, append(g.middleware, middleware...)...)
+}
+
+func (g *RouteGroup) PATCH(path string, handler HandlerFunc, middleware ...Middleware) {
+	g.router.PATCH(g.combine(path), handler, append(g.middleware, middleware...)...)
+}
+
+func (g *RouteGroup) OPTIONS(path string, handler HandlerFunc, middleware ...Middleware) {
+	g.router.OPTIONS(g.combine(path), handler, append(g.middleware, middleware...)...)
 }
 
 func (g *RouteGroup) combine(path string) string {

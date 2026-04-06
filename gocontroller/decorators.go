@@ -42,6 +42,13 @@ func DELETE(path, handler string, middleware ...Middleware) RouteMetadata {
 	return RouteMetadata{Method: "DELETE", Path: path, Handler: handler, Middleware: middleware}
 }
 
+func PATCH(path, handler string, middleware ...Middleware) RouteMetadata {
+	return RouteMetadata{Method: "PATCH", Path: path, Handler: handler, Middleware: middleware}
+}
+
+func OPTIONS(path, handler string, middleware ...Middleware) RouteMetadata {
+	return RouteMetadata{Method: "OPTIONS", Path: path, Handler: handler, Middleware: middleware}
+}
 func registerDecoratedController(group *RouteGroup, instance any, meta ControllerMetadata) error {
 	controllerGroup := group.Group(meta.Prefix, meta.Middleware...)
 	for _, route := range meta.Routes {
@@ -59,6 +66,10 @@ func registerDecoratedController(group *RouteGroup, instance any, meta Controlle
 			controllerGroup.PUT(route.Path, handler, route.Middleware...)
 		case "DELETE":
 			controllerGroup.DELETE(route.Path, handler, route.Middleware...)
+		case "PATCH":
+			controllerGroup.PATCH(route.Path, handler, route.Middleware...)
+		case "OPTIONS":
+			controllerGroup.OPTIONS(route.Path, handler, route.Middleware...)
 		default:
 			return fmt.Errorf("unsupported route method %q for path %q", route.Method, route.Path)
 		}
