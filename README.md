@@ -1,5 +1,7 @@
 # gocontroller
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/emmybxt/go-controller/blob/master/LICENSE)
+
 `gocontroller` is a lightweight Go library for building APIs with a familiar controller/module pattern inspired by NestJS and Express, while staying idiomatic Go.
 
 It gives you:
@@ -337,3 +339,7 @@ Before publishing:
 3. Add CI (`go test ./...`, `go vet ./...`).
 4. Add changelog and license.
 5. Add examples for both classic and annotation styles.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](https://github.com/emmybxt/go-controller/blob/master/LICENSE).
