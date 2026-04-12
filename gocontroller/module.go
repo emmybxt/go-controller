@@ -81,7 +81,8 @@ func loadModule(mod *Module, router *Router, container *Container, seen map[*Mod
 		}
 	}
 
-	group := router.Group(mod.Prefix, mod.Middleware...)
+	moduleMW := append([]Middleware{ModuleName(mod.Name)}, mod.Middleware...)
+	group := router.Group(mod.Prefix, moduleMW...)
 	for _, cdef := range mod.Controllers {
 		controller, err := instantiateController(container, cdef)
 		if err != nil {

@@ -497,6 +497,30 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	}
 }
 
+func TestModuleNameMiddleware(t *testing.T) {
+	router := NewRouter()
+	router.GET("/m", func(ctx *Context) error {
+		v, _ := ctx.Get(moduleNameContextKey)
+		name, _ := v.(string)
+		return ctx.OK(map[string]string{"module": name})
+	}, ModuleName("URLModule"))
+
+	req := httptest.NewRequest(http.MethodGet, "/m", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["module"] != "URLModule" {
+		t.Fatalf("expected module URLModule got %q", payload["module"])
+	}
+}
+
 func TestCustomErrorHandlerOverride(t *testing.T) {
 	router := NewRouter()
 	router.SetErrorHandler(func(ctx *Context, err error) {

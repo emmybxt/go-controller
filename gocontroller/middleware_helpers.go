@@ -11,7 +11,13 @@ func RequestLogger() Middleware {
 		return func(ctx *Context) error {
 			start := time.Now()
 			err := next(ctx)
-			log.Printf("[gocontroller] %s %s (%s)", ctx.Request.Method, ctx.Request.URL.Path, time.Since(start))
+			module := "gocontroller"
+			if v, ok := ctx.Get(moduleNameContextKey); ok {
+				if name, ok := v.(string); ok && name != "" {
+					module = name
+				}
+			}
+			log.Printf("[gocontroller][%s] %s %s (%s)", module, ctx.Request.Method, ctx.Request.URL.Path, time.Since(start))
 			return err
 		}
 	}
