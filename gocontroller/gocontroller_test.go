@@ -2,6 +2,7 @@ package gocontroller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -333,5 +334,93 @@ func TestContextResponseHelpers(t *testing.T) {
 	}
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 got %d", w.Code)
+	}
+}
+
+func TestRequestIDMiddleware(t *testing.T) {
+	router := NewRouter()
+	router.Use(RequestID())
+	router.GET("/rid", func(ctx *Context) error {
+		return ctx.OK(map[string]string{"request_id": ctx.RequestID()})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/rid", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if got := w.Header().Get(RequestIDHeader); got == "" {
+		t.Fatalf("expected %s header to be set", RequestIDHeader)
+	}
+}
+
+func TestRecoveryMiddleware(t *testing.T) {
+	router := NewRouter()
+	router.Use(RequestID(), Recovery(RecoveryConfig{}))
+	router.GET("/panic", func(ctx *Context) error {
+		panic("boom")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 got %d", w.Code)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["success"] != false {
+		t.Fatalf("expected success=false, got %v", payload["success"])
+	}
+	errObj, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object in payload")
+	}
+	if errObj["code"] != "internal_panic" {
+		t.Fatalf("expected internal_panic code, got %v", errObj["code"])
+	}
+	if errObj["trace_id"] == "" {
+		t.Fatalf("expected trace_id to be present")
+	}
+}
+
+func TestAPIErrorEnvelope(t *testing.T) {
+	router := NewRouter()
+	router.Use(RequestID())
+	router.GET("/err", func(ctx *Context) error {
+		return &APIError{
+			StatusCode: http.StatusUnprocessableEntity,
+			Code:       "unprocessable",
+			Message:    "bad payload",
+			Details: map[string]any{
+				"field": "email",
+			},
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/err", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 got %d", w.Code)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	errObj, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object in payload")
+	}
+	if errObj["code"] != "unprocessable" {
+		t.Fatalf("expected unprocessable code, got %v", errObj["code"])
 	}
 }

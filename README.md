@@ -218,6 +218,8 @@ Built-in helpers:
 
 - `gocontroller.RequestLogger()`
 - `gocontroller.AdaptHTTPMiddleware(func(http.Handler) http.Handler)`
+- `gocontroller.RequestID()`
+- `gocontroller.Recovery(gocontroller.RecoveryConfig{...})`
 
 ## Annotation + Codegen (Decorator-like)
 
@@ -342,6 +344,60 @@ Built-in response shortcuts on `*gocontroller.Context`:
 - `ctx.InternalError(msg)`
 - `ctx.Success(status, data)` and `ctx.Fail(status, msg)` for envelope style
 
+## Standardized Errors
+
+Use `gocontroller.APIError` for consistent API error responses:
+
+```go
+return &gocontroller.APIError{
+    StatusCode: 422,
+    Code:       "validation_failed",
+    Message:    "Invalid input",
+    Details:    map[string]any{"field": "email"},
+}
+```
+
+Response shape:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "validation_failed",
+    "message": "Invalid input",
+    "details": {"field": "email"},
+    "trace_id": "..."
+  }
+}
+```
+
+Built-in helpers:
+
+- `gocontroller.NewAPIError(status, code, message)`
+- `gocontroller.BadRequestError(...)`
+- `gocontroller.UnauthorizedError(...)`
+- `gocontroller.ForbiddenError(...)`
+- `gocontroller.NotFoundError(...)`
+- `gocontroller.ConflictError(...)`
+- `gocontroller.InternalError(...)`
+
+## Graceful Runtime Helpers
+
+You can run server lifecycle with context-aware graceful shutdown:
+
+```go
+ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer stop()
+
+err := app.Run(ctx, gocontroller.ServerOptions{
+    Addr:            ":8080",
+    ReadTimeout:     5 * time.Second,
+    WriteTimeout:    10 * time.Second,
+    IdleTimeout:     30 * time.Second,
+    ShutdownTimeout: 10 * time.Second,
+})
+```
+
 ## API Surface
 
 Main types/functions:
@@ -350,6 +406,8 @@ Main types/functions:
 - `(*App).Listen(addr)`
 - `(*App).Handler()`
 - `(*App).SetValidator(v)` / `(*App).Validator()`
+- `(*App).Run(ctx, ServerOptions)`
+- `(*App).NewHTTPServer(ServerOptions)`
 - `Module{ Name, Prefix, Providers, Controllers, Imports, Middleware }`
 - `RouteGroup.GET/POST/PUT/DELETE`
 - `ParseDTO[T](ctx)`
@@ -358,6 +416,8 @@ Main types/functions:
 - `GET/POST/PUT/DELETE` metadata helpers
 - `RegisterGeneratedControllerMetadata` (used by generated code)
 - `Validator`, `ValidatorFunc`, `SetDefaultValidator`, `DefaultValidator`
+- `APIError`, `NewAPIError`, helper constructors
+- `RequestID()`, `Recovery(RecoveryConfig{})`
 
 ## Error Handling Behavior
 

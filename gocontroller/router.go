@@ -110,19 +110,32 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) writeError(w http.ResponseWriter, err error) {
+	traceID := w.Header().Get(RequestIDHeader)
+
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		status := apiErr.StatusCode
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+		w.WriteHeader(status)
+		_ = jsonErrorDetailed(w, status, apiErr.Code, apiErr.Message, apiErr.Details, traceID)
+		return
+	}
+
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
 		w.WriteHeader(httpErr.StatusCode)
-		_ = jsonError(w, httpErr.StatusCode, httpErr.Message)
+		_ = jsonErrorDetailed(w, httpErr.StatusCode, "", httpErr.Message, nil, traceID)
 		return
 	}
 	if errors.Is(err, ErrValidation) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = jsonError(w, http.StatusBadRequest, err.Error())
+		_ = jsonErrorDetailed(w, http.StatusBadRequest, "validation_failed", err.Error(), nil, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusInternalServerError)
-	_ = jsonError(w, http.StatusInternalServerError, "internal server error")
+	_ = jsonErrorDetailed(w, http.StatusInternalServerError, "internal_error", "internal server error", nil, traceID)
 }
 
 type RouteGroup struct {
