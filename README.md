@@ -214,6 +214,11 @@ Middleware signature:
 type Middleware func(HandlerFunc) HandlerFunc
 ```
 
+Built-in helpers:
+
+- `gocontroller.RequestLogger()`
+- `gocontroller.AdaptHTTPMiddleware(func(http.Handler) http.Handler)`
+
 ## Annotation + Codegen (Decorator-like)
 
 If you prefer Nest-like annotations, use comments + generator.
@@ -303,6 +308,39 @@ Notes:
 
 - This keeps your controller/module architecture in one place.
 - If you need deep native middleware/context features of each framework, use adapters selectively at the boundary.
+
+## Web + API Composition Helpers
+
+You can avoid manual `finalHandler` path-switch logic with:
+
+- `gocontroller.WebAPIHandler(webHandler, apiHandler, opts)`
+- `gocontroller.NotFoundHTMLOrJSON(html404Path, jsonMessage)`
+- `gocontroller.ServePage(publicDir, pageFile)`
+
+Example:
+
+```go
+final := gocontroller.WebAPIHandler(webRouter, app.Handler(), gocontroller.HybridOptions{
+    WebExactPaths:              []string{"/"},
+    WebPathPrefixes:            []string{"/app", "/css/", "/js/"},
+    TreatSingleSegmentGETAsWeb: true,
+})
+```
+
+## Context Response Helpers
+
+Built-in response shortcuts on `*gocontroller.Context`:
+
+- `ctx.OK(data)`
+- `ctx.Created(data)`
+- `ctx.NoContent()`
+- `ctx.BadRequest(msg)`
+- `ctx.Unauthorized(msg)`
+- `ctx.Forbidden(msg)`
+- `ctx.NotFound(msg)`
+- `ctx.Conflict(msg)`
+- `ctx.InternalError(msg)`
+- `ctx.Success(status, data)` and `ctx.Fail(status, msg)` for envelope style
 
 ## API Surface
 

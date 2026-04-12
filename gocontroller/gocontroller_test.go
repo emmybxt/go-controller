@@ -1,8 +1,10 @@
 package gocontroller
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -268,3 +270,68 @@ func TestAppCustomValidator(t *testing.T) {
 type controllerFunc func(*RouteGroup)
 
 func (f controllerFunc) RegisterRoutes(g *RouteGroup) { f(g) }
+
+func TestAdaptHTTPMiddleware(t *testing.T) {
+	const key = "user-id"
+	httpMW := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), key, "u-123")))
+		})
+	}
+
+	var got string
+	router := NewRouter()
+	router.GET("/x", func(ctx *Context) error {
+		v := ctx.Request.Context().Value(key)
+		got, _ = v.(string)
+		return ctx.OK(map[string]string{"ok": "yes"})
+	}, AdaptHTTPMiddleware(httpMW))
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	if got != "u-123" {
+		t.Fatalf("expected adapted context value, got %q", got)
+	}
+}
+
+func TestWebAPIHandlerRouting(t *testing.T) {
+	web := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("web")) })
+	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("api")) })
+	handler := WebAPIHandler(web, api, HybridOptions{
+		WebExactPaths:              []string{"/"},
+		WebPathPrefixes:            []string{"/app", "/css/", "/js/"},
+		TreatSingleSegmentGETAsWeb: true,
+	})
+
+	check := func(method, path, want string) {
+		req := httptest.NewRequest(method, path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		body, _ := io.ReadAll(w.Body)
+		if string(body) != want {
+			t.Fatalf("%s %s expected %q got %q", method, path, want, string(body))
+		}
+	}
+
+	check(http.MethodGet, "/", "web")
+	check(http.MethodGet, "/app/dashboard", "web")
+	check(http.MethodGet, "/abc123", "web")
+	check(http.MethodPost, "/url/shorten", "api")
+}
+
+func TestContextResponseHelpers(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	ctx := newContext(w, req, nil, DefaultValidator())
+
+	if err := ctx.BadRequest("oops"); err != nil {
+		t.Fatalf("bad request helper: %v", err)
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", w.Code)
+	}
+}
