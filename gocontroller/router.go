@@ -89,12 +89,21 @@ func (r *Router) add(method, path string, handler HandlerFunc, middleware ...Mid
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	allowedMethods := map[string]struct{}{}
+	var firstPathMatch *route
+	var firstParams map[string]string
 	for _, rt := range r.routes {
-		if req.Method != rt.method {
-			continue
-		}
 		params, ok := matchPath(rt.parts, splitPath(req.URL.Path))
 		if !ok {
+			continue
+		}
+		if firstPathMatch == nil {
+			rtCopy := rt
+			firstPathMatch = &rtCopy
+			firstParams = params
+		}
+		if req.Method != rt.method {
+			allowedMethods[rt.method] = struct{}{}
 			continue
 		}
 
@@ -103,6 +112,25 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err := final(ctx); err != nil {
 			r.writeError(w, err)
 		}
+		return
+	}
+	if req.Method == http.MethodOptions && firstPathMatch != nil {
+		ctx := newContext(w, req, firstParams, r.Validator())
+		noop := func(*Context) error { return nil }
+		final := chain(noop, append(r.globalMiddleware, firstPathMatch.middleware...))
+		if err := final(ctx); err != nil {
+			r.writeError(w, err)
+		}
+		return
+	}
+	if len(allowedMethods) > 0 {
+		allow := make([]string, 0, len(allowedMethods))
+		for method := range allowedMethods {
+			allow = append(allow, method)
+		}
+		w.Header().Set("Allow", strings.Join(allow, ", "))
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = jsonErrorDetailed(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", nil, w.Header().Get(RequestIDHeader))
 		return
 	}
 	w.WriteHeader(http.StatusNotFound)
@@ -213,6 +241,27 @@ func splitPath(path string) []string {
 }
 
 func matchPath(pattern, actual []string) (map[string]string, bool) {
+	// Support a trailing wildcard segment: /assets/* matches /assets/a/b/c.
+	if len(pattern) > 0 && pattern[len(pattern)-1] == "*" {
+		if len(actual) < len(pattern)-1 {
+			return nil, false
+		}
+		params := map[string]string{}
+		for i := 0; i < len(pattern)-1; i++ {
+			part := pattern[i]
+			candidate := actual[i]
+			if strings.HasPrefix(part, ":") {
+				params[strings.TrimPrefix(part, ":")] = candidate
+				continue
+			}
+			if part != candidate {
+				return nil, false
+			}
+		}
+		params["*"] = strings.Join(actual[len(pattern)-1:], "/")
+		return params, true
+	}
+
 	if len(pattern) != len(actual) {
 		return nil, false
 	}

@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net/http"
 	"runtime/debug"
+	"strings"
 )
 
 const RequestIDHeader = "X-Request-ID"
@@ -75,4 +77,61 @@ func newRequestID() string {
 		return "gc-fallback-id"
 	}
 	return hex.EncodeToString(b)
+}
+
+type CORSConfig struct {
+	AllowOrigin  string
+	AllowMethods []string
+	AllowHeaders []string
+	MaxAge       int
+}
+
+// CORS applies a basic CORS policy and handles OPTIONS preflight.
+func CORS(config CORSConfig) Middleware {
+	origin := config.AllowOrigin
+	if origin == "" {
+		origin = "*"
+	}
+	methods := config.AllowMethods
+	if len(methods) == 0 {
+		methods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	}
+	headers := config.AllowHeaders
+	if len(headers) == 0 {
+		headers = []string{"Content-Type", "Authorization", RequestIDHeader}
+	}
+	maxAge := config.MaxAge
+	if maxAge <= 0 {
+		maxAge = 600
+	}
+
+	return func(next HandlerFunc) HandlerFunc {
+		return func(ctx *Context) error {
+			h := ctx.ResponseWriter.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Access-Control-Allow-Methods", strings.Join(methods, ", "))
+			h.Set("Access-Control-Allow-Headers", strings.Join(headers, ", "))
+			h.Set("Access-Control-Max-Age", fmt.Sprintf("%d", maxAge))
+
+			if ctx.Request.Method == http.MethodOptions {
+				ctx.ResponseWriter.WriteHeader(http.StatusNoContent)
+				return nil
+			}
+			return next(ctx)
+		}
+	}
+}
+
+// SecurityHeaders adds common hardening headers to responses.
+func SecurityHeaders() Middleware {
+	return func(next HandlerFunc) HandlerFunc {
+		return func(ctx *Context) error {
+			h := ctx.ResponseWriter.Header()
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("X-Frame-Options", "DENY")
+			h.Set("Referrer-Policy", "no-referrer")
+			h.Set("X-XSS-Protection", "0")
+			return next(ctx)
+		}
+	}
 }

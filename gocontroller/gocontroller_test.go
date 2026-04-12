@@ -424,3 +424,75 @@ func TestAPIErrorEnvelope(t *testing.T) {
 		t.Fatalf("expected unprocessable code, got %v", errObj["code"])
 	}
 }
+
+func TestMethodNotAllowedReturns405(t *testing.T) {
+	router := NewRouter()
+	router.GET("/users", func(ctx *Context) error { return ctx.OK(map[string]any{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodPost, "/users", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 got %d", w.Code)
+	}
+	if allow := w.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
+		t.Fatalf("expected Allow header to include GET, got %q", allow)
+	}
+}
+
+func TestWildcardRoute(t *testing.T) {
+	router := NewRouter()
+	router.GET("/assets/*", func(ctx *Context) error {
+		return ctx.OK(map[string]string{"path": ctx.Param("*")})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/img/icons/logo.svg", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", w.Code)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["path"] != "img/icons/logo.svg" {
+		t.Fatalf("unexpected wildcard path: %q", payload["path"])
+	}
+}
+
+func TestCORSMiddlewarePreflight(t *testing.T) {
+	router := NewRouter()
+	router.Use(CORS(CORSConfig{}))
+	router.GET("/x", func(ctx *Context) error { return ctx.OK(map[string]any{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodOptions, "/x", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 got %d", w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got == "" {
+		t.Fatalf("expected CORS header to be set")
+	}
+}
+
+func TestSecurityHeadersMiddleware(t *testing.T) {
+	router := NewRouter()
+	router.Use(SecurityHeaders())
+	router.GET("/x", func(ctx *Context) error { return ctx.OK(map[string]any{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("expected X-Frame-Options DENY")
+	}
+	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("expected X-Content-Type-Options nosniff")
+	}
+}

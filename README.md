@@ -220,6 +220,8 @@ Built-in helpers:
 - `gocontroller.AdaptHTTPMiddleware(func(http.Handler) http.Handler)`
 - `gocontroller.RequestID()`
 - `gocontroller.Recovery(gocontroller.RecoveryConfig{...})`
+- `gocontroller.CORS(gocontroller.CORSConfig{...})`
+- `gocontroller.SecurityHeaders()`
 
 ## Annotation + Codegen (Decorator-like)
 
@@ -344,6 +346,17 @@ Built-in response shortcuts on `*gocontroller.Context`:
 - `ctx.InternalError(msg)`
 - `ctx.Success(status, data)` and `ctx.Fail(status, msg)` for envelope style
 
+## Router Improvements
+
+- Automatic `405 Method Not Allowed` + `Allow` header when path exists but method does not.
+- Wildcard routes with trailing `*`.
+
+```go
+router.GET("/assets/*", func(ctx *gocontroller.Context) error {
+    return ctx.OK(map[string]string{"path": ctx.Param("*")})
+})
+```
+
 ## Standardized Errors
 
 Use `gocontroller.APIError` for consistent API error responses:
@@ -418,6 +431,7 @@ Main types/functions:
 - `Validator`, `ValidatorFunc`, `SetDefaultValidator`, `DefaultValidator`
 - `APIError`, `NewAPIError`, helper constructors
 - `RequestID()`, `Recovery(RecoveryConfig{})`
+- `CORS(CORSConfig{})`, `SecurityHeaders()`
 
 ## Error Handling Behavior
 
