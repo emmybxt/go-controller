@@ -40,6 +40,14 @@ func (a *App) Validator() Validator {
 	return a.Router.Validator()
 }
 
+// SetErrorHandler overrides router error rendering for this app.
+func (a *App) SetErrorHandler(h ErrorHandlerFunc) {
+	if a == nil || a.Router == nil {
+		return
+	}
+	a.Router.SetErrorHandler(h)
+}
+
 func NewApp(root *Module) (*App, error) {
 	router := NewRouter()
 	container := NewContainer()

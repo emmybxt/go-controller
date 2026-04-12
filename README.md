@@ -222,6 +222,7 @@ Built-in helpers:
 - `gocontroller.Recovery(gocontroller.RecoveryConfig{...})`
 - `gocontroller.CORS(gocontroller.CORSConfig{...})`
 - `gocontroller.SecurityHeaders()`
+- `gocontroller.RequireContextValue(key, "Unauthorized")`
 
 ## Annotation + Codegen (Decorator-like)
 
@@ -394,6 +395,22 @@ Built-in helpers:
 - `gocontroller.ConflictError(...)`
 - `gocontroller.InternalError(...)`
 
+You can also override global route error rendering:
+
+```go
+app.SetErrorHandler(func(ctx *gocontroller.Context, err error) {
+    _ = ctx.JSON(418, map[string]any{"custom": true, "error": err.Error()})
+})
+```
+
+## Auth Context Helpers
+
+Built-ins to reduce repeated auth glue:
+
+- `RequireContextValue(key, message)` middleware
+- `ContextValue[T](ctx, key)` typed extraction
+- `MustContextValue[T](ctx, key, message)` typed extraction with unauthorized error fallback
+
 ## Graceful Runtime Helpers
 
 You can run server lifecycle with context-aware graceful shutdown:
@@ -421,6 +438,7 @@ Main types/functions:
 - `(*App).SetValidator(v)` / `(*App).Validator()`
 - `(*App).Run(ctx, ServerOptions)`
 - `(*App).NewHTTPServer(ServerOptions)`
+- `(*App).SetErrorHandler(ErrorHandlerFunc)`
 - `Module{ Name, Prefix, Providers, Controllers, Imports, Middleware }`
 - `RouteGroup.GET/POST/PUT/DELETE`
 - `ParseDTO[T](ctx)`
@@ -432,6 +450,7 @@ Main types/functions:
 - `APIError`, `NewAPIError`, helper constructors
 - `RequestID()`, `Recovery(RecoveryConfig{})`
 - `CORS(CORSConfig{})`, `SecurityHeaders()`
+- `RequireContextValue(...)`, `ContextValue[T](...)`, `MustContextValue[T](...)`
 
 ## Error Handling Behavior
 

@@ -14,15 +14,23 @@ type route struct {
 	middleware []Middleware
 }
 
+type ErrorHandlerFunc func(*Context, error)
+
 // Router provides method-based routing and middleware composition.
 type Router struct {
 	globalMiddleware []Middleware
 	routes           []route
 	validator        Validator
+	errorHandler     ErrorHandlerFunc
 }
 
 func NewRouter() *Router {
 	return &Router{validator: DefaultValidator()}
+}
+
+// SetErrorHandler overrides route-handler error rendering.
+func (r *Router) SetErrorHandler(h ErrorHandlerFunc) {
+	r.errorHandler = h
 }
 
 // SetValidator overrides validation engine used by Context.BindJSON for this router.
@@ -110,7 +118,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		ctx := newContext(w, req, params, r.Validator())
 		final := chain(rt.handler, append(r.globalMiddleware, rt.middleware...))
 		if err := final(ctx); err != nil {
-			r.writeError(w, err)
+			r.handleError(ctx, err)
 		}
 		return
 	}
@@ -119,7 +127,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		noop := func(*Context) error { return nil }
 		final := chain(noop, append(r.globalMiddleware, firstPathMatch.middleware...))
 		if err := final(ctx); err != nil {
-			r.writeError(w, err)
+			r.handleError(ctx, err)
 		}
 		return
 	}
@@ -135,6 +143,14 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	w.WriteHeader(http.StatusNotFound)
 	_ = jsonError(w, http.StatusNotFound, "not found")
+}
+
+func (r *Router) handleError(ctx *Context, err error) {
+	if r.errorHandler != nil {
+		r.errorHandler(ctx, err)
+		return
+	}
+	r.writeError(ctx.ResponseWriter, err)
 }
 
 func (r *Router) writeError(w http.ResponseWriter, err error) {

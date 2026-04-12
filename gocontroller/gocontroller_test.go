@@ -496,3 +496,53 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 		t.Fatalf("expected X-Content-Type-Options nosniff")
 	}
 }
+
+func TestCustomErrorHandlerOverride(t *testing.T) {
+	router := NewRouter()
+	router.SetErrorHandler(func(ctx *Context, err error) {
+		_ = ctx.JSON(http.StatusTeapot, map[string]any{
+			"custom": true,
+			"error":  err.Error(),
+		})
+	})
+	router.GET("/err", func(ctx *Context) error {
+		return fmt.Errorf("boom")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/err", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTeapot {
+		t.Fatalf("expected 418 got %d", w.Code)
+	}
+}
+
+func TestRequireAndMustContextValue(t *testing.T) {
+	type user struct{ ID string }
+	key := "auth_user"
+
+	router := NewRouter()
+	router.GET("/me", func(ctx *Context) error {
+		u, err := MustContextValue[*user](ctx, key, "")
+		if err != nil {
+			return err
+		}
+		return ctx.OK(map[string]string{"id": u.ID})
+	}, RequireContextValue(key, "Unauthorized"))
+
+	unauthReq := httptest.NewRequest(http.MethodGet, "/me", nil)
+	unauthW := httptest.NewRecorder()
+	router.ServeHTTP(unauthW, unauthReq)
+	if unauthW.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 got %d", unauthW.Code)
+	}
+
+	authReq := httptest.NewRequest(http.MethodGet, "/me", nil)
+	authReq = authReq.WithContext(context.WithValue(authReq.Context(), key, &user{ID: "u1"}))
+	authW := httptest.NewRecorder()
+	router.ServeHTTP(authW, authReq)
+	if authW.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", authW.Code)
+	}
+}
