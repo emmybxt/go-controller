@@ -22,6 +22,8 @@ type Module struct {
 type App struct {
 	Router    *Router
 	Container *Container
+	Lifecycle *LifecycleManager
+	Health    *HealthRegistry
 }
 
 // SetValidator overrides the app/router validator for request DTO validation.
@@ -40,6 +42,22 @@ func (a *App) Validator() Validator {
 	return a.Router.Validator()
 }
 
+// SetMaxBodyBytes sets the maximum request body size used by Context.BindJSON.
+func (a *App) SetMaxBodyBytes(n int64) {
+	if a == nil || a.Router == nil {
+		return
+	}
+	a.Router.SetMaxBodyBytes(n)
+}
+
+// MaxBodyBytes returns the configured request body limit for JSON binding.
+func (a *App) MaxBodyBytes() int64 {
+	if a == nil || a.Router == nil {
+		return DefaultMaxBodyBytes
+	}
+	return a.Router.MaxBodyBytes()
+}
+
 // SetErrorHandler overrides router error rendering for this app.
 func (a *App) SetErrorHandler(h ErrorHandlerFunc) {
 	if a == nil || a.Router == nil {
@@ -51,16 +69,18 @@ func (a *App) SetErrorHandler(h ErrorHandlerFunc) {
 func NewApp(root *Module) (*App, error) {
 	router := NewRouter()
 	container := NewContainer()
+	lifecycle := NewLifecycleManager()
+	health := NewHealthRegistry()
 	seen := map[*Module]bool{}
 
-	if err := loadModule(root, router, container, seen); err != nil {
+	if err := loadModule(root, router, container, lifecycle, health, seen); err != nil {
 		return nil, err
 	}
 
-	return &App{Router: router, Container: container}, nil
+	return &App{Router: router, Container: container, Lifecycle: lifecycle, Health: health}, nil
 }
 
-func loadModule(mod *Module, router *Router, container *Container, seen map[*Module]bool) error {
+func loadModule(mod *Module, router *Router, container *Container, lifecycle *LifecycleManager, health *HealthRegistry, seen map[*Module]bool) error {
 	if mod == nil {
 		return fmt.Errorf("module is nil")
 	}
@@ -70,13 +90,13 @@ func loadModule(mod *Module, router *Router, container *Container, seen map[*Mod
 	seen[mod] = true
 
 	for _, imported := range mod.Imports {
-		if err := loadModule(imported, router, container, seen); err != nil {
+		if err := loadModule(imported, router, container, lifecycle, health, seen); err != nil {
 			return err
 		}
 	}
 
 	for _, p := range mod.Providers {
-		if err := container.Provide(p); err != nil {
+		if err := container.provideWithLifecycle(p, lifecycle, mod.Name); err != nil {
 			return fmt.Errorf("module %s provider: %w", mod.Name, err)
 		}
 	}

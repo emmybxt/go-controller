@@ -22,10 +22,14 @@ type Router struct {
 	routes           []route
 	validator        Validator
 	errorHandler     ErrorHandlerFunc
+	maxBodyBytes     int64
 }
 
 func NewRouter() *Router {
-	return &Router{validator: DefaultValidator()}
+	return &Router{
+		validator:    DefaultValidator(),
+		maxBodyBytes: DefaultMaxBodyBytes,
+	}
 }
 
 // SetErrorHandler overrides route-handler error rendering.
@@ -47,6 +51,17 @@ func (r *Router) Validator() Validator {
 		return DefaultValidator()
 	}
 	return r.validator
+}
+
+// SetMaxBodyBytes sets the maximum request body size used by Context.BindJSON.
+// Values <= 0 disable the framework-level body limit.
+func (r *Router) SetMaxBodyBytes(n int64) {
+	r.maxBodyBytes = n
+}
+
+// MaxBodyBytes returns the configured request body limit for JSON binding.
+func (r *Router) MaxBodyBytes() int64 {
+	return r.maxBodyBytes
 }
 
 func (r *Router) Use(middleware ...Middleware) {
@@ -115,7 +130,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		ctx := newContext(w, req, params, r.Validator())
+		ctx := newContext(w, req, params, r.Validator(), r.MaxBodyBytes())
 		final := chain(rt.handler, append(r.globalMiddleware, rt.middleware...))
 		if err := final(ctx); err != nil {
 			r.handleError(ctx, err)
@@ -123,7 +138,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if req.Method == http.MethodOptions && firstPathMatch != nil {
-		ctx := newContext(w, req, firstParams, r.Validator())
+		ctx := newContext(w, req, firstParams, r.Validator(), r.MaxBodyBytes())
 		noop := func(*Context) error { return nil }
 		final := chain(noop, append(r.globalMiddleware, firstPathMatch.middleware...))
 		if err := final(ctx); err != nil {
@@ -173,9 +188,15 @@ func (r *Router) writeError(w http.ResponseWriter, err error) {
 		_ = jsonErrorDetailed(w, httpErr.StatusCode, "", httpErr.Message, nil, traceID)
 		return
 	}
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_ = jsonErrorDetailed(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "request body too large", nil, traceID)
+		return
+	}
 	if errors.Is(err, ErrValidation) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = jsonErrorDetailed(w, http.StatusBadRequest, "validation_failed", err.Error(), nil, traceID)
+		_ = jsonErrorDetailed(w, http.StatusBadRequest, "validation_failed", ErrValidation.Error(), nil, traceID)
 		return
 	}
 	w.WriteHeader(http.StatusInternalServerError)

@@ -9,5 +9,9 @@ func (a *App) Handler() http.Handler {
 }
 
 func (a *App) Listen(addr string) error {
-	return http.ListenAndServe(addr, a.Handler())
+	return a.NewHTTPServer(ServerOptions{Addr: addr}).ListenAndServe()
+}
+
+func (a *App) ListenTLS(addr, certFile, keyFile string) error {
+	return a.NewHTTPServer(ServerOptions{Addr: addr}).ListenAndServeTLS(certFile, keyFile)
 }
