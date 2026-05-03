@@ -32,23 +32,28 @@ func (w *idempotencyResponseWriter) WriteHeader(code int) {
 	}
 	w.wroteHeader = true
 	w.statusCode = code
-	w.headers = make(map[string][]string)
-	for k, vals := range w.ResponseWriter.Header() {
-		for _, v := range vals {
-			w.headers[k] = append(w.headers[k], v)
-		}
-	}
 }
 
 func (w *idempotencyResponseWriter) Write(data []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
-	n, err := w.ResponseWriter.Write(data)
-	if err == nil {
-		w.body.Write(data[:n])
+	if w.headers == nil {
+		w.captureHeaders()
 	}
-	return n, err
+	return w.body.Write(data)
+}
+
+func (w *idempotencyResponseWriter) captureHeaders() {
+	if w.headers != nil {
+		return
+	}
+	w.headers = make(map[string][]string)
+	for k, vals := range w.ResponseWriter.Header() {
+		for _, v := range vals {
+			w.headers[k] = append(w.headers[k], v)
+		}
+	}
 }
 
 // IdempotencyStore stores idempotent request responses.
@@ -176,9 +181,7 @@ func Idempotency(cfg IdempotencyConfig) Middleware {
 
 			if entry := cfg.Store.get(cacheKey); entry != nil {
 				for k, vals := range entry.headers {
-					for _, v := range vals {
-						ctx.ResponseWriter.Header().Set(k, v)
-					}
+					ctx.ResponseWriter.Header()[k] = append([]string(nil), vals...)
 				}
 				ctx.ResponseWriter.Header().Set("X-Idempotent-Replayed", "true")
 				ctx.ResponseWriter.WriteHeader(entry.statusCode)
@@ -193,11 +196,12 @@ func Idempotency(cfg IdempotencyConfig) Middleware {
 			ctx.ResponseWriter = recorder
 
 			err := next(ctx)
+			recorder.captureHeaders()
 
 			entry := &idempotencyEntry{
 				statusCode: recorder.statusCode,
 				headers:    recorder.headers,
-				body:       recorder.body.Bytes(),
+				body:       append([]byte(nil), recorder.body.Bytes()...),
 				createdAt:  time.Now(),
 			}
 			if entry.headers == nil {
@@ -205,6 +209,9 @@ func Idempotency(cfg IdempotencyConfig) Middleware {
 			}
 
 			cfg.Store.set(cacheKey, entry)
+
+			recorder.ResponseWriter.WriteHeader(entry.statusCode)
+			_, _ = recorder.ResponseWriter.Write(entry.body)
 
 			return err
 		}

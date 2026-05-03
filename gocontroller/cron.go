@@ -30,6 +30,7 @@ type Scheduler struct {
 	running bool
 	stopCh  chan struct{}
 	doneCh  chan struct{}
+	stop    sync.Once
 }
 
 // NewScheduler creates a new task scheduler.
@@ -94,13 +95,13 @@ func (s *Scheduler) Start(ctx context.Context) {
 			s.mu.Lock()
 			s.running = false
 			s.mu.Unlock()
-			close(s.doneCh)
+			s.stop.Do(func() { close(s.doneCh) })
 			return
 		case <-s.stopCh:
 			s.mu.Lock()
 			s.running = false
 			s.mu.Unlock()
-			close(s.doneCh)
+			s.stop.Do(func() { close(s.doneCh) })
 			return
 		case <-ticker.C:
 			s.runDueTasks(ctx)
@@ -122,6 +123,7 @@ func (s *Scheduler) Stop() {
 
 	s.stopCh = make(chan struct{})
 	s.doneCh = make(chan struct{})
+	s.stop = sync.Once{}
 }
 
 // Tasks returns all registered tasks.

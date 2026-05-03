@@ -12,10 +12,10 @@ type providerFactory struct {
 }
 
 type Container struct {
-	instances  map[reflect.Type]reflect.Value
-	factories  map[reflect.Type]providerFactory
-	lifecycle  *LifecycleManager
-	moduleName string
+	instances map[reflect.Type]reflect.Value
+	factories map[reflect.Type]providerFactory
+	lifecycle *LifecycleManager
+	modName   string
 }
 
 func NewContainer() *Container {
@@ -25,18 +25,19 @@ func NewContainer() *Container {
 	}
 }
 
-func (c *Container) Provide(value any) error {
-	return c.provideWithLifecycle(value, nil, "")
+func (c *Container) WithLifecycle(lm *LifecycleManager, modName string) {
+	c.lifecycle = lm
+	c.modName = modName
 }
 
-func (c *Container) provideWithLifecycle(value any, lifecycle *LifecycleManager, moduleName string) error {
+func (c *Container) Provide(value any) error {
 	if value == nil {
 		return fmt.Errorf("nil provider")
 	}
 
 	if lp, ok := value.(lifecycleProviderWrapper); ok {
 		value = lp.Provider()
-		moduleName = lp.Name()
+		c.modName = lp.Name()
 	}
 
 	v := reflect.ValueOf(value)
@@ -53,13 +54,13 @@ func (c *Container) provideWithLifecycle(value any, lifecycle *LifecycleManager,
 			}
 		}
 		outType := t.Out(0)
-		c.factories[outType] = providerFactory{fn: v, isLifecycle: lifecycle != nil, name: moduleName}
+		c.factories[outType] = providerFactory{fn: v, isLifecycle: c.lifecycle != nil, name: c.modName}
 		return nil
 	}
 
 	c.instances[t] = v
-	if lifecycle != nil {
-		registerInstanceLifecycle(v.Interface(), lifecycle, moduleName)
+	if c.lifecycle != nil {
+		registerInstanceLifecycle(v.Interface(), c.lifecycle, c.modName)
 	}
 	return nil
 }
@@ -132,7 +133,7 @@ func (c *Container) resolveType(t reflect.Type) (reflect.Value, error) {
 	}
 
 	c.instances[t] = value
-	if factory.isLifecycle {
+	if factory.isLifecycle && c.lifecycle != nil {
 		registerInstanceLifecycle(value.Interface(), c.lifecycle, factory.name)
 	}
 
