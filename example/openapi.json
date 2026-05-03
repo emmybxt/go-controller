@@ -1,0 +1,91 @@
+{
+  "info": {
+    "title": "Something API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/hello": {
+      "get": {
+        "operationId": "Hello",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "summary": "Returns a hello message"
+      }
+    },
+    "/items": {
+      "get": {
+        "operationId": "ListItems",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "summary": "List items with pagination"
+      }
+    },
+    "/protected": {
+      "get": {
+        "operationId": "Protected",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "summary": "JWT protected endpoint"
+      }
+    },
+    "/session": {
+      "get": {
+        "operationId": "SessionDemo",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "summary": "Session demo"
+      }
+    },
+    "/something": {
+      "post": {
+        "operationId": "CreateSomething",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "summary": "Create a new resource"
+      }
+    },
+    "/something/:id": {
+      "get": {
+        "operationId": "GetSomething",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "summary": "Get a resource by ID"
+      }
+    },
+    "/upload": {
+      "post": {
+        "operationId": "Upload",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "summary": "Upload a file"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080"
+    }
+  ]
+}

@@ -1,8 +1,14 @@
 package gocontroller
 
-import "reflect"
+import (
+	"reflect"
+	"sync"
+)
 
-var generatedControllerRegistry = map[reflect.Type]ControllerMetadata{}
+var (
+	generatedControllerRegistryMu sync.RWMutex
+	generatedControllerRegistry   = map[reflect.Type]ControllerMetadata{}
+)
 
 // RegisterGeneratedControllerMetadata is used by generated code.
 func RegisterGeneratedControllerMetadata(controllerPtr any, meta ControllerMetadata) {
@@ -13,6 +19,8 @@ func RegisterGeneratedControllerMetadata(controllerPtr any, meta ControllerMetad
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
+	generatedControllerRegistryMu.Lock()
+	defer generatedControllerRegistryMu.Unlock()
 	generatedControllerRegistry[t] = meta
 }
 
@@ -24,6 +32,8 @@ func lookupGeneratedControllerMetadata(controller any) (ControllerMetadata, bool
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
+	generatedControllerRegistryMu.RLock()
+	defer generatedControllerRegistryMu.RUnlock()
 	meta, ok := generatedControllerRegistry[t]
 	return meta, ok
 }

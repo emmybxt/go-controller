@@ -1,10 +1,15 @@
 package gocontroller
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 )
+
+const DefaultMaxBodyBytes int64 = 1 << 20
 
 // Context carries request/response helpers for handlers and middleware.
 type Context struct {
@@ -13,15 +18,17 @@ type Context struct {
 	Params         map[string]string
 	Values         map[string]any
 	validator      Validator
+	maxBodyBytes   int64
 }
 
-func newContext(w http.ResponseWriter, r *http.Request, params map[string]string, v Validator) *Context {
+func newContext(w http.ResponseWriter, r *http.Request, params map[string]string, v Validator, maxBodyBytes int64) *Context {
 	return &Context{
 		ResponseWriter: w,
 		Request:        r,
 		Params:         params,
 		Values:         map[string]any{},
 		validator:      v,
+		maxBodyBytes:   maxBodyBytes,
 	}
 }
 
@@ -53,9 +60,33 @@ func (c *Context) Text(status int, value string) error {
 
 func (c *Context) BindJSON(dto any) error {
 	defer c.Request.Body.Close()
-	if err := json.NewDecoder(c.Request.Body).Decode(dto); err != nil {
+
+	body := c.Request.Body
+	if c.maxBodyBytes > 0 {
+		body = http.MaxBytesReader(c.ResponseWriter, body, c.maxBodyBytes)
+	}
+
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(dto); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return fmt.Errorf("decode request body: %w", err)
+		}
+		return &APIError{
+			StatusCode: http.StatusBadRequest,
+			Code:       "invalid_json",
+			Message:    "invalid JSON request body",
+			Cause:      err,
+		}
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return BadRequestError("request body must contain a single JSON value")
+		}
 		return fmt.Errorf("decode request body: %w", err)
 	}
+
 	validator := c.validator
 	if validator == nil {
 		validator = DefaultValidator()
@@ -64,4 +95,8 @@ func (c *Context) BindJSON(dto any) error {
 		return err
 	}
 	return nil
+}
+
+func newContextWithClaims(parent context.Context, key jwtContextKey, claims JWTClaims) context.Context {
+	return context.WithValue(parent, key, claims)
 }

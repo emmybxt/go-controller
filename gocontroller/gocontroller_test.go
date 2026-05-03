@@ -1,13 +1,17 @@
 package gocontroller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -268,6 +272,53 @@ func TestAppCustomValidator(t *testing.T) {
 	}
 }
 
+func TestBindJSONRejectsOversizedBody(t *testing.T) {
+	type dto struct {
+		Name string `json:"name" validate:"required"`
+	}
+
+	router := NewRouter()
+	router.SetMaxBodyBytes(8)
+	router.POST("/users", func(ctx *Context) error {
+		_, err := ParseDTO[dto](ctx)
+		if err != nil {
+			return err
+		}
+		return ctx.Created(map[string]string{"ok": "true"})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alex"}`))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 got %d", w.Code)
+	}
+}
+
+func TestBindJSONRejectsMultipleJSONValues(t *testing.T) {
+	type dto struct {
+		Name string `json:"name" validate:"required"`
+	}
+
+	router := NewRouter()
+	router.POST("/users", func(ctx *Context) error {
+		_, err := ParseDTO[dto](ctx)
+		if err != nil {
+			return err
+		}
+		return ctx.Created(map[string]string{"ok": "true"})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alex"} {"name":"second"}`))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", w.Code)
+	}
+}
+
 type controllerFunc func(*RouteGroup)
 
 func (f controllerFunc) RegisterRoutes(g *RouteGroup) { f(g) }
@@ -327,7 +378,7 @@ func TestWebAPIHandlerRouting(t *testing.T) {
 func TestContextResponseHelpers(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	ctx := newContext(w, req, nil, DefaultValidator())
+	ctx := newContext(w, req, nil, DefaultValidator(), DefaultMaxBodyBytes)
 
 	if err := ctx.BadRequest("oops"); err != nil {
 		t.Fatalf("bad request helper: %v", err)
@@ -465,18 +516,34 @@ func TestWildcardRoute(t *testing.T) {
 
 func TestCORSMiddlewarePreflight(t *testing.T) {
 	router := NewRouter()
-	router.Use(CORS(CORSConfig{}))
+	router.Use(CORS(CORSConfig{AllowOrigins: []string{"https://app.example.com"}}))
 	router.GET("/x", func(ctx *Context) error { return ctx.OK(map[string]any{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodOptions, "/x", nil)
+	req.Header.Set("Origin", "https://app.example.com")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 got %d", w.Code)
 	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got == "" {
-		t.Fatalf("expected CORS header to be set")
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Fatalf("expected explicit CORS origin, got %q", got)
+	}
+}
+
+func TestCORSMiddlewareDefaultDoesNotAllowAnyOrigin(t *testing.T) {
+	router := NewRouter()
+	router.Use(CORS(CORSConfig{}))
+	router.GET("/x", func(ctx *Context) error { return ctx.OK(map[string]any{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodOptions, "/x", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no default CORS origin, got %q", got)
 	}
 }
 
@@ -494,6 +561,93 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	}
 	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("expected X-Content-Type-Options nosniff")
+	}
+	if w.Header().Get("Content-Security-Policy") == "" {
+		t.Fatalf("expected Content-Security-Policy header")
+	}
+}
+
+func TestNewHTTPServerUsesTimeoutDefaults(t *testing.T) {
+	app := &App{Router: NewRouter(), Container: NewContainer()}
+	srv := app.NewHTTPServer(ServerOptions{})
+
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Fatalf("expected ReadHeaderTimeout default")
+	}
+	if srv.ReadTimeout <= 0 {
+		t.Fatalf("expected ReadTimeout default")
+	}
+	if srv.WriteTimeout <= 0 {
+		t.Fatalf("expected WriteTimeout default")
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Fatalf("expected IdleTimeout default")
+	}
+	if srv.MaxHeaderBytes <= 0 {
+		t.Fatalf("expected MaxHeaderBytes default")
+	}
+}
+
+func TestCSRFMiddlewareSetsTokenAndRejectsMissingSubmission(t *testing.T) {
+	router := NewRouter()
+	router.Use(CSRF(CSRFConfig{Secret: []byte("01234567890123456789012345678901")}))
+	router.GET("/form", func(ctx *Context) error {
+		return ctx.OK(map[string]string{"csrf": ctx.CSRFToken()})
+	})
+	router.POST("/form", func(ctx *Context) error {
+		return ctx.OK(map[string]string{"ok": "true"})
+	})
+
+	getReq := httptest.NewRequest(http.MethodGet, "/form", nil)
+	getW := httptest.NewRecorder()
+	router.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d", getW.Code)
+	}
+	cookie := getW.Result().Cookies()[0]
+
+	postReq := httptest.NewRequest(http.MethodPost, "/form", nil)
+	postReq.AddCookie(cookie)
+	postW := httptest.NewRecorder()
+	router.ServeHTTP(postW, postReq)
+	if postW.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 got %d", postW.Code)
+	}
+}
+
+func TestSaveFileSanitizesUploadedFilename(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "../../evil.txt")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("payload")); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	ctx := newContext(w, req, nil, DefaultValidator(), DefaultMaxBodyBytes)
+
+	file, err := ctx.BindFile("file")
+	if err != nil {
+		t.Fatalf("bind file: %v", err)
+	}
+	dir := t.TempDir()
+	path, err := SaveFile(dir, file)
+	if err != nil {
+		t.Fatalf("save file: %v", err)
+	}
+	if filepath.Dir(path) != dir {
+		t.Fatalf("expected saved file to stay in %q, got %q", dir, path)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "evil.txt")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected file outside upload dir")
 	}
 }
 

@@ -6,12 +6,16 @@ import (
 )
 
 type providerFactory struct {
-	fn reflect.Value
+	fn          reflect.Value
+	isLifecycle bool
+	name        string
 }
 
 type Container struct {
-	instances map[reflect.Type]reflect.Value
-	factories map[reflect.Type]providerFactory
+	instances  map[reflect.Type]reflect.Value
+	factories  map[reflect.Type]providerFactory
+	lifecycle  *LifecycleManager
+	moduleName string
 }
 
 func NewContainer() *Container {
@@ -22,9 +26,19 @@ func NewContainer() *Container {
 }
 
 func (c *Container) Provide(value any) error {
+	return c.provideWithLifecycle(value, nil, "")
+}
+
+func (c *Container) provideWithLifecycle(value any, lifecycle *LifecycleManager, moduleName string) error {
 	if value == nil {
 		return fmt.Errorf("nil provider")
 	}
+
+	if lp, ok := value.(lifecycleProviderWrapper); ok {
+		value = lp.Provider()
+		moduleName = lp.Name()
+	}
+
 	v := reflect.ValueOf(value)
 	t := v.Type()
 
@@ -39,11 +53,14 @@ func (c *Container) Provide(value any) error {
 			}
 		}
 		outType := t.Out(0)
-		c.factories[outType] = providerFactory{fn: v}
+		c.factories[outType] = providerFactory{fn: v, isLifecycle: lifecycle != nil, name: moduleName}
 		return nil
 	}
 
 	c.instances[t] = v
+	if lifecycle != nil {
+		registerInstanceLifecycle(v.Interface(), lifecycle, moduleName)
+	}
 	return nil
 }
 
@@ -64,6 +81,20 @@ func (c *Container) Resolve(target any) error {
 func (c *Container) MustResolve(target any) {
 	if err := c.Resolve(target); err != nil {
 		panic(err)
+	}
+}
+
+func registerInstanceLifecycle(instance any, lifecycle *LifecycleManager, moduleName string) {
+	if lifecycle == nil {
+		return
+	}
+	switch instance.(type) {
+	case Lifecycle, LifecycleInitOnly, LifecycleDestroyOnly:
+		name := moduleName
+		if namer, ok := instance.(interface{ ModuleName() string }); ok {
+			name = namer.ModuleName()
+		}
+		lifecycle.Register(instance, name)
 	}
 }
 
@@ -101,5 +132,9 @@ func (c *Container) resolveType(t reflect.Type) (reflect.Value, error) {
 	}
 
 	c.instances[t] = value
+	if factory.isLifecycle {
+		registerInstanceLifecycle(value.Interface(), c.lifecycle, factory.name)
+	}
+
 	return value, nil
 }
