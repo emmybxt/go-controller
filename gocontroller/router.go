@@ -23,6 +23,7 @@ type Router struct {
 	validator        Validator
 	errorHandler     ErrorHandlerFunc
 	maxBodyBytes     int64
+	app              *App
 }
 
 func NewRouter() *Router {
@@ -131,6 +132,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		ctx := newContext(w, req, params, r.Validator(), r.MaxBodyBytes())
+		if r.app != nil {
+			ctx.Set("gocontroller.app", r.app)
+		}
 		final := chain(rt.handler, append(r.globalMiddleware, rt.middleware...))
 		if err := final(ctx); err != nil {
 			r.handleError(ctx, err)
@@ -139,6 +143,9 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.Method == http.MethodOptions && firstPathMatch != nil {
 		ctx := newContext(w, req, firstParams, r.Validator(), r.MaxBodyBytes())
+		if r.app != nil {
+			ctx.Set("gocontroller.app", r.app)
+		}
 		noop := func(*Context) error { return nil }
 		final := chain(noop, append(r.globalMiddleware, firstPathMatch.middleware...))
 		if err := final(ctx); err != nil {

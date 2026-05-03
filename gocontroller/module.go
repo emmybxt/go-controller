@@ -77,7 +77,8 @@ func NewApp(root *Module) (*App, error) {
 		return nil, err
 	}
 
-	return &App{Router: router, Container: container, Lifecycle: lifecycle, Health: health}, nil
+	router.app = &App{Router: router, Container: container, Lifecycle: lifecycle, Health: health}
+	return router.app, nil
 }
 
 func loadModule(mod *Module, router *Router, container *Container, lifecycle *LifecycleManager, health *HealthRegistry, seen map[*Module]bool) error {
@@ -95,8 +96,10 @@ func loadModule(mod *Module, router *Router, container *Container, lifecycle *Li
 		}
 	}
 
+	container.WithLifecycle(lifecycle, mod.Name)
+
 	for _, p := range mod.Providers {
-		if err := container.provideWithLifecycle(p, lifecycle, mod.Name); err != nil {
+		if err := container.Provide(p); err != nil {
 			return fmt.Errorf("module %s provider: %w", mod.Name, err)
 		}
 	}
