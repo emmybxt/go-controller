@@ -169,11 +169,11 @@ func sortRoutesBySpecificity(routes []routeInfo) {
 		if leftStatic != rightStatic {
 			return leftStatic > rightStatic
 		}
-		if leftParams != rightParams {
-			return leftParams < rightParams
-		}
 		if leftWildcards != rightWildcards {
 			return leftWildcards < rightWildcards
+		}
+		if leftParams != rightParams {
+			return leftParams < rightParams
 		}
 		if leftSegments != rightSegments {
 			return leftSegments > rightSegments

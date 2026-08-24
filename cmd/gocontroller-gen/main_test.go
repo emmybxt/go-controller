@@ -94,6 +94,20 @@ type FixtureController struct{}
 	}
 }
 
+func TestSortRoutesBySpecificityPlacesWildcardsLast(t *testing.T) {
+	routes := []routeInfo{
+		{Method: "GET", Path: "/files/*", Handler: "Wildcard"},
+		{Method: "GET", Path: "/files/:id", Handler: "Parameter"},
+		{Method: "GET", Path: "/files/current", Handler: "Static"},
+	}
+
+	sortRoutesBySpecificity(routes)
+
+	if routes[0].Handler != "Static" || routes[1].Handler != "Parameter" || routes[2].Handler != "Wildcard" {
+		t.Fatalf("unexpected specificity order: %#v", routes)
+	}
+}
+
 func writeGeneratorFixture(t *testing.T, dir, name, source string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {

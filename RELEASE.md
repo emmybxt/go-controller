@@ -1,3 +1,14 @@
+# Release Notes — v1.4.2
+
+## Route Specificity Fix
+
+- Parameter routes now sort before wildcard routes when their static path
+  specificity is equal, ensuring `/files/:id` is not shadowed by `/files/*`.
+
+This release includes every v1.4.1 generator improvement below.
+
+---
+
 # Release Notes — v1.4.1
 
 ## Route Generator Fixes
