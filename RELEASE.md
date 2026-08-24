@@ -1,3 +1,20 @@
+# Release Notes — v1.4.1
+
+## Route Generator Fixes
+
+- Added `@Patch` and `@Options` support to `gocontroller-gen`.
+- Changed controller discovery to two passes so annotated methods can live in
+  different files from their controller type without being dropped.
+- Made generated output deterministic across identical runs.
+- Ordered static routes before parameter and wildcard routes to prevent paths
+  such as `/workspace/stats` from being shadowed by `/:id/stats`.
+- Excluded test and generated source files from annotation discovery.
+
+This release is backward compatible with v1.4.0. Regenerate route metadata
+after upgrading.
+
+---
+
 # Release Notes — v1.4.0
 
 > NestJS-inspired HTTP framework for Go with controllers, modules, DI, and 30+ built-in features.

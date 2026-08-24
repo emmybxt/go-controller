@@ -9,12 +9,12 @@ func init() {
 		Prefix: "",
 		Routes: []gocontroller.RouteMetadata{
 			gocontroller.GET("/hello", "Hello"),
-			gocontroller.GET("/something/:id", "GetSomething"),
-			gocontroller.POST("/something", "CreateSomething", ExampleAPIKeyMiddleware()),
-			gocontroller.POST("/upload", "Upload", ExampleAPIKeyMiddleware()),
 			gocontroller.GET("/items", "ListItems"),
 			gocontroller.GET("/protected", "Protected"),
 			gocontroller.GET("/session", "SessionDemo"),
+			gocontroller.POST("/something", "CreateSomething", ExampleAPIKeyMiddleware()),
+			gocontroller.POST("/upload", "Upload", ExampleAPIKeyMiddleware()),
+			gocontroller.GET("/something/:id", "GetSomething"),
 		},
 	})
 }

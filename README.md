@@ -240,7 +240,16 @@ func (c *UserController) GetByID(ctx *gocontroller.Context) error { return nil }
 // @Post("/")
 // @Use(AuthMiddleware())
 func (c *UserController) Create(ctx *gocontroller.Context) error { return nil }
+
+// @Patch("/:id")
+func (c *UserController) Patch(ctx *gocontroller.Context) error { return nil }
 ```
+
+The generator supports `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, and
+`@Options`. Controller methods may be split across files; generation discovers
+the controller types first, then collects and deterministically orders every
+annotated method. Static routes are registered before parameter and wildcard
+routes so `/workspace/stats` cannot be shadowed by `/:id/stats`.
 
 ### Step 2: Add `go:generate`
 

@@ -27,6 +27,20 @@ type routeInfo struct {
 	Middleware []string
 }
 
+type routeAnnotation struct {
+	Tag    string
+	Method string
+}
+
+var supportedRouteAnnotations = []routeAnnotation{
+	{Tag: "Get", Method: "GET"},
+	{Tag: "Post", Method: "POST"},
+	{Tag: "Put", Method: "PUT"},
+	{Tag: "Patch", Method: "PATCH"},
+	{Tag: "Delete", Method: "DELETE"},
+	{Tag: "Options", Method: "OPTIONS"},
+}
+
 func main() {
 	var dir string
 	var out string
@@ -53,7 +67,7 @@ func parseControllers(dir string) (string, []controllerInfo, error) {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, dir, func(info os.FileInfo) bool {
 		name := info.Name()
-		if strings.HasSuffix(name, ".gen.go") {
+		if strings.HasSuffix(name, ".gen.go") || strings.HasSuffix(name, "_test.go") {
 			return false
 		}
 		return strings.HasSuffix(name, ".go")
@@ -66,66 +80,75 @@ func parseControllers(dir string) (string, []controllerInfo, error) {
 		return "", nil, fmt.Errorf("no package found")
 	}
 
-	var pkg *ast.Package
-	for _, p := range pkgs {
-		pkg = p
-		break
+	packageNames := make([]string, 0, len(pkgs))
+	for name := range pkgs {
+		packageNames = append(packageNames, name)
 	}
+	sort.Strings(packageNames)
+	pkg := pkgs[packageNames[0]]
+	fileNames := make([]string, 0, len(pkg.Files))
+	for name := range pkg.Files {
+		fileNames = append(fileNames, name)
+	}
+	sort.Strings(fileNames)
 
 	controllers := map[string]*controllerInfo{}
-	for _, file := range pkg.Files {
+	for _, fileName := range fileNames {
+		file := pkg.Files[fileName]
 		for _, decl := range file.Decls {
-			switch d := decl.(type) {
-			case *ast.GenDecl:
-				if d.Tok != token.TYPE {
-					continue
-				}
-				for _, spec := range d.Specs {
-					ts, ok := spec.(*ast.TypeSpec)
-					if !ok {
-						continue
-					}
-					_, isStruct := ts.Type.(*ast.StructType)
-					if !isStruct {
-						continue
-					}
-					tags := extractTags(ts.Doc, d.Doc)
-					controllerTag, ok := tags["Controller"]
-					if !ok {
-						continue
-					}
-					c := &controllerInfo{Name: ts.Name.Name, Prefix: trimQuotes(controllerTag)}
-					if use, ok := tags["Use"]; ok {
-						c.Middleware = parseUseList(use)
-					}
-					controllers[c.Name] = c
-				}
-			case *ast.FuncDecl:
-				if d.Recv == nil || d.Name == nil {
-					continue
-				}
-				recvType := receiverName(d.Recv)
-				if recvType == "" {
-					continue
-				}
-				ctrl, ok := controllers[recvType]
+			d, ok := decl.(*ast.GenDecl)
+			if !ok || d.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range d.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
 				if !ok {
 					continue
 				}
-				tags := extractTags(d.Doc)
-				for _, verb := range []string{"Get", "Post", "Put", "Delete"} {
-					raw, ok := tags[verb]
-					if !ok {
-						continue
-					}
-					rt := routeInfo{Method: strings.ToUpper(verb), Path: trimQuotes(raw), Handler: d.Name.Name}
-					if use, ok := tags["Use"]; ok {
-						rt.Middleware = parseUseList(use)
-					}
-					ctrl.Routes = append(ctrl.Routes, rt)
+				if _, isStruct := ts.Type.(*ast.StructType); !isStruct {
+					continue
 				}
+				tags := extractTags(ts.Doc, d.Doc)
+				controllerTag, ok := tags["Controller"]
+				if !ok {
+					continue
+				}
+				controller := &controllerInfo{Name: ts.Name.Name, Prefix: trimQuotes(controllerTag)}
+				if use, ok := tags["Use"]; ok {
+					controller.Middleware = parseUseList(use)
+				}
+				controllers[controller.Name] = controller
 			}
 		}
+	}
+
+	for _, fileName := range fileNames {
+		file := pkg.Files[fileName]
+		for _, decl := range file.Decls {
+			method, ok := decl.(*ast.FuncDecl)
+			if !ok || method.Recv == nil || method.Name == nil {
+				continue
+			}
+			controller, ok := controllers[receiverName(method.Recv)]
+			if !ok {
+				continue
+			}
+			tags := extractTags(method.Doc)
+			for _, annotation := range supportedRouteAnnotations {
+				raw, ok := tags[annotation.Tag]
+				if !ok {
+					continue
+				}
+				route := routeInfo{Method: annotation.Method, Path: trimQuotes(raw), Handler: method.Name.Name}
+				if use, ok := tags["Use"]; ok {
+					route.Middleware = parseUseList(use)
+				}
+				controller.Routes = append(controller.Routes, route)
+			}
+		}
+	}
+	for _, controller := range controllers {
+		sortRoutesBySpecificity(controller.Routes)
 	}
 
 	list := make([]controllerInfo, 0, len(controllers))
@@ -137,6 +160,50 @@ func parseControllers(dir string) (string, []controllerInfo, error) {
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	return pkg.Name, list, nil
+}
+
+func sortRoutesBySpecificity(routes []routeInfo) {
+	sort.SliceStable(routes, func(i, j int) bool {
+		leftStatic, leftParams, leftWildcards, leftSegments := routeSpecificity(routes[i].Path)
+		rightStatic, rightParams, rightWildcards, rightSegments := routeSpecificity(routes[j].Path)
+		if leftStatic != rightStatic {
+			return leftStatic > rightStatic
+		}
+		if leftParams != rightParams {
+			return leftParams < rightParams
+		}
+		if leftWildcards != rightWildcards {
+			return leftWildcards < rightWildcards
+		}
+		if leftSegments != rightSegments {
+			return leftSegments > rightSegments
+		}
+		if routes[i].Path != routes[j].Path {
+			return routes[i].Path < routes[j].Path
+		}
+		if routes[i].Method != routes[j].Method {
+			return routes[i].Method < routes[j].Method
+		}
+		return routes[i].Handler < routes[j].Handler
+	})
+}
+
+func routeSpecificity(path string) (static, params, wildcards, segments int) {
+	for _, segment := range strings.Split(strings.Trim(path, "/"), "/") {
+		if segment == "" {
+			continue
+		}
+		segments++
+		switch {
+		case segment == "*" || strings.HasPrefix(segment, "*"):
+			wildcards++
+		case strings.HasPrefix(segment, ":"):
+			params++
+		default:
+			static++
+		}
+	}
+	return static, params, wildcards, segments
 }
 
 func extractTags(groups ...*ast.CommentGroup) map[string]string {
