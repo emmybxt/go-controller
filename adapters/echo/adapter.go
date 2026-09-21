@@ -22,7 +22,7 @@ func (a *adapter) Register(routes []gocontroller.Route) error {
 	if native.IsNil(a.router) {
 		return fmt.Errorf("echo router is nil")
 	}
-	return native.Register(routes, func(method, path string, handler echo.HandlerFunc, middleware []echo.MiddlewareFunc) {
-		a.router.Add(method, path, handler, middleware...)
+	return native.Register(routes, func(method, path string, handler echo.HandlerFunc, middleware, after []echo.MiddlewareFunc) {
+		a.router.Add(method, path, withAfter(handler, after), middleware...)
 	})
 }

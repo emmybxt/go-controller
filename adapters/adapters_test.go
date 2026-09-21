@@ -15,14 +15,15 @@ import (
 var nativeFailure = errors.New("native failure")
 
 type harness struct {
-	adapter    gc.Adapter
-	request    func(*http.Request) *http.Response
-	handler    any
-	create     any
-	failure    any
-	abort      any
-	middleware func(string) any
-	events     *[]string
+	adapter      gc.Adapter
+	request      func(*http.Request) *http.Response
+	handler      any
+	create       any
+	failure      any
+	afterFailure any
+	abort        any
+	middleware   func(string) any
+	events       *[]string
 }
 
 type controller struct{ meta gc.ControllerMetadata }
@@ -77,7 +78,7 @@ func TestNativeFrameworkIntegration(t *testing.T) {
 
 func TestAdaptersValidateWholeBatchBeforeRegistration(t *testing.T) {
 	for _, framework := range frameworks {
-		for _, invalid := range []string{"handler", "middleware", "nil handler", "nil middleware"} {
+		for _, invalid := range []string{"handler", "middleware", "nil handler", "nil middleware", "after middleware"} {
 			t.Run(framework.name+"/"+invalid, func(t *testing.T) {
 				h := framework.setup(t)
 				bad := gc.GET("/bad", h.handler)
@@ -88,6 +89,8 @@ func TestAdaptersValidateWholeBatchBeforeRegistration(t *testing.T) {
 					bad.Middleware = []any{func(int) {}}
 				case "nil handler":
 					bad.Handler = nil
+				case "after middleware":
+					bad.Middleware = []any{gc.UseAfter(func(int) {})}
 				case "nil middleware":
 					bad.Middleware = []any{nil}
 				}

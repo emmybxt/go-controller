@@ -17,7 +17,7 @@ func (a *adapter) Register(routes []gocontroller.Route) error {
 	if native.IsNil(a.router) {
 		return fmt.Errorf("fiber v2 router is nil")
 	}
-	return native.Register(routes, func(method, path string, handler fiber.Handler, middleware []fiber.Handler) {
-		a.router.Add(method, path, append(middleware, handler)...)
+	return native.Register(routes, func(method, path string, handler fiber.Handler, middleware, after []fiber.Handler) {
+		a.router.Add(method, path, append(middleware, withAfter(handler, after)...)...)
 	})
 }

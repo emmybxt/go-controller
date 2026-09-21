@@ -29,7 +29,7 @@ func run(dir, out string, check bool) error {
 		return err
 	}
 	if len(controllers) == 0 {
-		return fmt.Errorf("no annotated controllers found in %s", dir)
+		return fmt.Errorf("no controller annotations or declarations found in %s", dir)
 	}
 	code, err := generateCode(pkg, controllers)
 	if err != nil {

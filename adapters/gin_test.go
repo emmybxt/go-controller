@@ -48,8 +48,9 @@ func setupGin(t *testing.T) harness {
 			}
 			c.String(201, "%s", body.Title)
 		},
-		failure: func(c *gin.Context) { _ = c.Error(nativeFailure) },
-		abort:   func(c *gin.Context) { c.String(401, "blocked"); c.Abort() },
+		afterFailure: func(c *gin.Context) { _ = c.Error(nativeFailure) },
+		failure:      func(c *gin.Context) { _ = c.Error(nativeFailure) },
+		abort:        func(c *gin.Context) { c.String(401, "blocked"); c.Abort() },
 	}
 }
 
