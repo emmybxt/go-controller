@@ -1,4 +1,4 @@
-# v2.1.0 — declarations and middleware phases (unreleased)
+# v2.1.0 — declarations and middleware phases
 
 An additive minor release; the `/v2` import path, native handler signatures, existing public metadata structs, comment annotations, and direct route helpers remain compatible.
 
@@ -8,7 +8,13 @@ An additive minor release; the `/v2` import path, native handler signatures, exi
 - Preserve native abort and error behavior with documented adapter-specific downstream continuation.
 - Include a runnable Gin declaration example, generation diagnostics, middleware integration coverage for all five adapters, and research notes for follow-up features.
 
-The version constant is prepared as `2.1.0`. No `v2.1.0` tag or release has been published. Use this checkout to try the additions; the installable published release below remains v2.0.0.
+Requires Go 1.25 or newer. Install this release:
+
+```sh
+go get github.com/emmybxt/go-controller/v2@v2.1.0
+```
+
+Or use `go get github.com/emmybxt/go-controller/v2@latest` for the latest stable v2 release. Run `go generate ./...` after changing declarations and commit the generated files. See [README.md](README.md) for setup and middleware semantics.
 
 ---
 

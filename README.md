@@ -4,15 +4,17 @@ A controller registration and dependency injection library for existing Go web a
 
 Create your Gin, Echo, or Fiber router, describe your modules, then call `gocontroller.Mount`. Routes are registered directly on that router. Your handlers receive its native context, and the framework owns middleware execution, binding, responses, errors, and server lifecycle.
 
-**Published version: 2.0.0.** This checkout prepares **2.1.0 (unreleased)** with function-based declarations and before/after middleware. Version 2 uses the `/v2` module path and requires Go 1.25 or newer. Existing v1 tags retain the previous standalone framework. See [migration notes](MIGRATING.md).
+**Version 2.1.0** includes function-based declarations and before/after middleware. Version 2 uses the `/v2` module path and requires Go 1.25 or newer. Existing v1 tags retain the previous standalone framework. See [migration notes](MIGRATING.md).
 
 ## Quick start: Gin
 
 Install the release:
 
 ```sh
-go get github.com/emmybxt/go-controller/v2@v2.0.0
+go get github.com/emmybxt/go-controller/v2@v2.1.0
 ```
+
+Use `go get github.com/emmybxt/go-controller/v2@latest` to install the latest stable v2 release.
 
 ```go
 package main
@@ -140,7 +142,7 @@ Execution order is host/global/group → parent module → imported module → c
 
 Call `Mount` before serving requests and stop startup on any error. Provider resolution, duplicate-route checks, and handler/middleware type validation finish before registration. Native registration failures (including invalid route patterns) can occur after earlier routes have been added; discard that router. The library does not inspect or roll back the host's existing route table. Register routes in your intended priority order, particularly with Fiber's ordered routing.
 
-## Function-based declarations (v2.1.0, unreleased)
+## Function-based declarations (v2.1.0)
 
 Declare your controller once, then place a route call immediately before each native method:
 
@@ -172,7 +174,7 @@ The `var _ =` prefix is required: Go does not permit a bare function call at pac
 
 Middleware factories in declarations run once at package initialization. They can reference imports directly because the generator does not copy those expressions. Configure declarations before mounting; do not mutate them while serving requests. Middleware closures must be safe for concurrent requests. Declarations are reusable across mounts, so keep request data in the native context. Generated bindings detect changed/missing route declarations and panic at startup with a `run go generate` message; use generator `-check` in CI to catch stale output, including changed method associations.
 
-## Before and after middleware (v2.1.0, unreleased)
+## Before and after middleware (v2.1.0)
 
 Existing native middleware remains supported. Handwritten metadata and modules can also select a phase:
 
@@ -237,7 +239,7 @@ From this checkout, choose one server:
 ```sh
 go generate ./...
 go run ./example        # Gin, generated metadata
-go run ./example/declarations # Gin, function declarations (this checkout)
+go run ./example/declarations # Gin, function declarations
 go run ./example/echo   # Echo v5, handwritten metadata
 go run ./example/fiber  # Fiber v3, handwritten metadata
 ```
