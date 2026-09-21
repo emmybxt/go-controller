@@ -17,7 +17,15 @@ func generateCode(pkg string, controllers []controllerInfo) ([]byte, error) {
 }
 
 func writeController(b *strings.Builder, controller controllerInfo) {
-	fmt.Fprintf(b, "func (c *%s) ControllerMetadata() gocontroller.ControllerMetadata {\n", controller.Name)
+	receiver := "c"
+	if controller.Declaration == receiver {
+		receiver = "controller"
+	}
+	fmt.Fprintf(b, "func (%s *%s) ControllerMetadata() gocontroller.ControllerMetadata {\n", receiver, controller.Name)
+	if controller.Declaration != "" {
+		writeDeclaration(b, controller, receiver)
+		return
+	}
 	fmt.Fprintf(b, "return gocontroller.ControllerMetadata{Prefix: %q,\n", controller.Prefix)
 	if len(controller.Middleware) > 0 {
 		fmt.Fprintf(b, "Middleware: []any{%s},\n", strings.Join(controller.Middleware, ", "))
@@ -31,4 +39,12 @@ func writeController(b *strings.Builder, controller controllerInfo) {
 		b.WriteString("),\n")
 	}
 	b.WriteString("},\n}\n}\n\n")
+}
+
+func writeDeclaration(b *strings.Builder, controller controllerInfo, receiver string) {
+	fmt.Fprintf(b, "return %s.MustBind(\n", controller.Declaration)
+	for _, route := range controller.Routes {
+		fmt.Fprintf(b, "gocontroller.%s(%q, %s.%s),\n", route.Method, route.Path, receiver, route.Handler)
+	}
+	b.WriteString(")\n}\n\n")
 }

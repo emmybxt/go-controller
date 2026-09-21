@@ -50,7 +50,8 @@ func setupEchoV4(t *testing.T) harness {
 			}
 			return c.String(201, body.Title)
 		},
-		failure: func(echo.Context) error { return nativeFailure },
+		afterFailure: func(echo.HandlerFunc) echo.HandlerFunc { return func(echo.Context) error { return nativeFailure } },
+		failure:      func(echo.Context) error { return nativeFailure },
 		abort: echo.MiddlewareFunc(func(echo.HandlerFunc) echo.HandlerFunc {
 			return func(c echo.Context) error { return c.String(401, "blocked") }
 		}),

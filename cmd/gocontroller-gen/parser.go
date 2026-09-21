@@ -17,10 +17,11 @@ import (
 )
 
 type controllerInfo struct {
-	Name       string
-	Prefix     string
-	Middleware []string
-	Routes     []routeInfo
+	Name        string
+	Prefix      string
+	Middleware  []string
+	Routes      []routeInfo
+	Declaration string
 }
 
 type routeInfo struct {
@@ -43,6 +44,9 @@ func parseControllers(dir string) (string, []controllerInfo, error) {
 		if err := collectControllers(file, controllers); err != nil {
 			return "", nil, err
 		}
+	}
+	if err := collectDeclarations(files, controllers); err != nil {
+		return "", nil, err
 	}
 	for _, file := range files {
 		if err := collectMethods(file, controllers); err != nil {
@@ -121,11 +125,8 @@ func collectControllers(file *ast.File, controllers map[string]*controllerInfo) 
 }
 
 func parseController(spec *ast.TypeSpec, tags map[string]string) (*controllerInfo, error) {
-	if _, ok := spec.Type.(*ast.StructType); !ok || spec.Assign.IsValid() {
-		return nil, fmt.Errorf("controller %s must be a struct declaration", spec.Name.Name)
-	}
-	if spec.TypeParams != nil {
-		return nil, fmt.Errorf("controller %s: generic controllers require explicit metadata", spec.Name.Name)
+	if err := validateControllerType(spec); err != nil {
+		return nil, err
 	}
 	prefix, err := strconv.Unquote(tags["Controller"])
 	if err != nil {
@@ -138,6 +139,16 @@ func parseController(spec *ast.TypeSpec, tags map[string]string) (*controllerInf
 	return &controllerInfo{Name: spec.Name.Name, Prefix: prefix, Middleware: middleware}, nil
 }
 
+func validateControllerType(spec *ast.TypeSpec) error {
+	if _, ok := spec.Type.(*ast.StructType); !ok || spec.Assign.IsValid() {
+		return fmt.Errorf("controller %s must be a struct declaration", spec.Name.Name)
+	}
+	if spec.TypeParams != nil {
+		return fmt.Errorf("controller %s: generic controllers require explicit metadata", spec.Name.Name)
+	}
+	return nil
+}
+
 func collectMethods(file *ast.File, controllers map[string]*controllerInfo) error {
 	for _, decl := range file.Decls {
 		method, ok := decl.(*ast.FuncDecl)
@@ -148,15 +159,25 @@ func collectMethods(file *ast.File, controllers map[string]*controllerInfo) erro
 		if controller == nil {
 			continue
 		}
-		if method.Name.Name == "ControllerMetadata" {
-			return fmt.Errorf("controller %s already implements ControllerMetadata; remove its @Controller annotation", controller.Name)
+		if err := collectMethod(controller, method); err != nil {
+			return err
 		}
-		routes, err := parseMethod(method)
-		if err != nil {
-			return fmt.Errorf("%s.%s: %w", controller.Name, method.Name.Name, err)
-		}
-		controller.Routes = append(controller.Routes, routes...)
 	}
+	return nil
+}
+
+func collectMethod(controller *controllerInfo, method *ast.FuncDecl) error {
+	if method.Name.Name == "ControllerMetadata" {
+		return fmt.Errorf("controller %s already implements ControllerMetadata; use either generated or handwritten metadata", controller.Name)
+	}
+	routes, err := parseMethod(method)
+	if err != nil {
+		return fmt.Errorf("%s.%s: %w", controller.Name, method.Name.Name, err)
+	}
+	if controller.Declaration != "" && len(routes) != 0 {
+		return fmt.Errorf("controller %s mixes route declarations with comment annotations; use one style per controller", controller.Name)
+	}
+	controller.Routes = append(controller.Routes, routes...)
 	return nil
 }
 

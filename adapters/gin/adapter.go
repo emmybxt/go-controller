@@ -17,7 +17,7 @@ func (a *adapter) Register(routes []gocontroller.Route) error {
 	if native.IsNil(a.router) {
 		return fmt.Errorf("gin router is nil")
 	}
-	return native.Register(routes, func(method, path string, handler gin.HandlerFunc, middleware []gin.HandlerFunc) {
-		a.router.Handle(method, path, append(middleware, handler)...)
+	return native.Register(routes, func(method, path string, handler gin.HandlerFunc, middleware, after []gin.HandlerFunc) {
+		a.router.Handle(method, path, append(append(middleware, handler), after...)...)
 	})
 }

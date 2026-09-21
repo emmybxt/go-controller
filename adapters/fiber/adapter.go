@@ -17,12 +17,11 @@ func (a *adapter) Register(routes []gocontroller.Route) error {
 	if native.IsNil(a.router) {
 		return fmt.Errorf("fiber router is nil")
 	}
-	return native.Register(routes, func(method, path string, handler fiber.Handler, middleware []fiber.Handler) {
+	return native.Register(routes, func(method, path string, handler fiber.Handler, middleware, after []fiber.Handler) {
 		handlers := make([]any, 0, len(middleware)+1)
-		for _, middleware := range middleware {
+		for _, middleware := range append(middleware, withAfter(handler, after)...) {
 			handlers = append(handlers, middleware)
 		}
-		handlers = append(handlers, handler)
 		a.router.Add([]string{method}, path, handlers[0], handlers[1:]...)
 	})
 }

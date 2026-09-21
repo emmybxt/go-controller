@@ -4,7 +4,7 @@ A controller registration and dependency injection library for existing Go web a
 
 Create your Gin, Echo, or Fiber router, describe your modules, then call `gocontroller.Mount`. Routes are registered directly on that router. Your handlers receive its native context, and the framework owns middleware execution, binding, responses, errors, and server lifecycle.
 
-**Version 2.0.0** uses the `/v2` module path and requires Go 1.25 or newer. Existing v1 tags retain the previous standalone framework. See [migration notes](MIGRATING.md).
+**Published version: 2.0.0.** This checkout prepares **2.1.0 (unreleased)** with function-based declarations and before/after middleware. Version 2 uses the `/v2` module path and requires Go 1.25 or newer. Existing v1 tags retain the previous standalone framework. See [migration notes](MIGRATING.md).
 
 ## Quick start: Gin
 
@@ -140,6 +140,69 @@ Execution order is host/global/group → parent module → imported module → c
 
 Call `Mount` before serving requests and stop startup on any error. Provider resolution, duplicate-route checks, and handler/middleware type validation finish before registration. Native registration failures (including invalid route patterns) can occur after earlier routes have been added; discard that router. The library does not inspect or roll back the host's existing route table. Register routes in your intended priority order, particularly with Fiber's ordered routing.
 
+## Function-based declarations (v2.1.0, unreleased)
+
+Declare your controller once, then place a route call immediately before each native method:
+
+```go
+//go:generate go run github.com/emmybxt/go-controller/v2/cmd/gocontroller-gen -dir . -out routes.gen.go
+
+var accountsController = gocontroller.Controllers("/accounts").
+    UseBefore(Authenticate).
+    UseAfter(AuditRequest)
+
+type AccountsController struct { service *AccountService }
+
+var _ = accountsController.GET("/:accountId").UseBefore(RequireAccountAccess)
+func (a *AccountsController) GetAccount(c *gin.Context) {
+    c.JSON(200, a.service.Find(c.Param("accountId")))
+}
+
+var _ = accountsController.POST("")
+func (a *AccountsController) CreateAccount(c *gin.Context) {
+    // Your native Gin handler.
+}
+```
+
+`Authenticate`, `AuditRequest`, and `RequireAccountAccess` are your own native middleware functions. `Use` is an alias for `UseBefore`. Both controller and route declarations support `Use`, `UseBefore`, and `UseAfter`; calls accept multiple middleware functions or factories. All nine HTTP verbs are supported in uppercase.
+
+Run `go generate ./...`. The generator binds each declaration to the next method and creates `ControllerMetadata` for `*AccountsController`. Put your controller instance or constructor in `Module.Controllers` as usual. Do not put the declaration variable in that list. Native handler signatures, providers, and framework contexts stay unchanged. See the [complete runnable example](example/declarations/main.go).
+
+The `var _ =` prefix is required: Go does not permit a bare function call at package scope. This is valid Go source, with adjacency interpreted by our generator. Use one ungrouped marker per method, a string-literal route path, and one declaration variable per controller struct. The variable can have any name; its factory must directly call the imported `gocontroller.Controllers` (import aliases work). Controller types and methods may live in different files in the same package. Do not mix annotations and declarations on the same controller.
+
+Middleware factories in declarations run once at package initialization. They can reference imports directly because the generator does not copy those expressions. Configure declarations before mounting; do not mutate them while serving requests. Middleware closures must be safe for concurrent requests. Declarations are reusable across mounts, so keep request data in the native context. Generated bindings detect changed/missing route declarations and panic at startup with a `run go generate` message; use generator `-check` in CI to catch stale output, including changed method associations.
+
+## Before and after middleware (v2.1.0, unreleased)
+
+Existing native middleware remains supported. Handwritten metadata and modules can also select a phase:
+
+```go
+module.Middleware = []any{
+    gocontroller.UseBefore(Authenticate),
+    gocontroller.UseAfter(AuditRequest),
+}
+
+// Inside ControllerMetadata:
+gocontroller.GET("/:id", c.Get,
+    gocontroller.UseBefore(RequireAccountAccess),
+    gocontroller.UseAfter(AuditRequest),
+)
+```
+
+Before middleware enters in parent-module → imported-module → controller → route order. After middleware enters in the same scope order, downstream of the handler. Within each phase, declaration order is preserved. Native wrappers unwind in reverse order. Nested `MiddlewareGroup` values are supported; everything inside an outer after group stays downstream. Global middleware still belongs on the host router.
+
+| Framework | After behavior |
+| --- | --- |
+| Gin | Added after the handler in the native chain. `Abort` skips remaining middleware; `c.Error` alone does not. If the handler calls `Next`, downstream middleware runs during that call. |
+| Echo v4/v5 | Runs after the handler returns `nil`. A returned error skips it and reaches the host error handler. |
+| Fiber v2/v3 | A successful terminal handler advances into the after chain. An explicit `Next` runs it once during that call. A returned error before continuation skips it. The chain terminates at this route rather than falling through to unrelated routes. |
+
+Before middleware that denies a request stops the handler and its after chain using the framework's normal stop mechanism. Errors from after middleware retain native propagation. Responses may already be committed, so use after middleware for auditing or other downstream work, not response transformation. For timing, recovery, or cleanup covering errors and denied requests, use ordinary native middleware that wraps `Next`/`next` (and `defer` when appropriate). `UseAfter` is not a guaranteed finally hook.
+
+Users supply their own middleware with the native signatures in the adapter table. No middleware registry, base class, or library-specific context is required. The [declaration example](example/declarations/main.go) also demonstrates `CurrentUser(c)` as an application-owned accessor populated by authentication middleware. Its `X-Demo-User` header is demonstration input, not production authentication.
+
+See [research and next-feature candidates](docs/routing-controllers-research.md) for typed user/tenant/record resolvers, authorization factories, and optional validation inspired by `routing-controllers`.
+
 ## Optional annotation generation
 
 Keep routes beside native controller methods without manually implementing `ControllerMetadata`:
@@ -174,15 +237,18 @@ From this checkout, choose one server:
 ```sh
 go generate ./...
 go run ./example        # Gin, generated metadata
+go run ./example/declarations # Gin, function declarations (this checkout)
 go run ./example/echo   # Echo v5, handwritten metadata
 go run ./example/fiber  # Fiber v3, handwritten metadata
 ```
+
+The declarations example uses `/api/accounts/42`: `curl -H "X-Demo-User: alice" localhost:8080/api/accounts/42`.
 
 Each listens on port 8080. Request `http://localhost:8080/api/books/1`. The examples share an ordinary Go service without importing a web framework into that service.
 
 ## Custom adapters
 
-Implement `gocontroller.Adapter` with `Register([]gocontroller.Route) error`. `Mount` passes fully composed paths, bound handlers, and ordered middleware. Validate the full batch's native function types before registering it. Register those functions directly on your host router without introducing a request dispatcher or context wrapper.
+Implement `gocontroller.Adapter` with `Register([]gocontroller.Route) error`. `Mount` passes fully composed paths, bound handlers, and ordered middleware. Validate the full batch's native function types before registering it. For v2.1.0 phase helpers, recognize `gocontroller.MiddlewareGroup`, partition its native functions by phase, and define downstream continuation for your host. Unwrapped middleware is before middleware. Register those functions directly on your host router without introducing a request dispatcher or context wrapper.
 
 ## Verification
 
