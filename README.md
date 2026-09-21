@@ -1,476 +1,198 @@
-# gocontroller
+# go-controller v2
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/emmybxt/go-controller/blob/master/LICENSE)
+A controller registration and dependency injection library for existing Go web applications.
 
-`gocontroller` is a lightweight Go library for building APIs with a familiar controller/module pattern inspired by NestJS and Express, while staying idiomatic Go.
+Create your Gin, Echo, or Fiber router, describe your modules, then call `gocontroller.Mount`. Routes are registered directly on that router. Your handlers receive its native context, and the framework owns middleware execution, binding, responses, errors, and server lifecycle.
 
-It gives you:
+**Version 2.0.0** uses the `/v2` module path and requires Go 1.25 or newer. Existing v1 tags retain the previous standalone framework. See [migration notes](MIGRATING.md).
 
-- Controller-oriented route organization
-- Route, group, and module middleware composition
-- Nest-style module graph (`imports`, `providers`, `controllers`)
-- Reflection-based dependency injection
-- DTO-style request parsing and validation
-- Annotation-driven route metadata with `go generate`
-- `net/http` compatibility so you can mount into Gin, Echo, Fiber adapters
+## Quick start: Gin
 
-## Why this library exists
+Install the release:
 
-Go frameworks are powerful, but many teams want a predictable architecture where:
-
-- routes are declared near controller methods
-- dependencies are constructor-injected
-- feature modules are explicit
-- request DTOs are validated consistently
-
-`gocontroller` focuses on architecture and composition so your business code stays clean.
-
-## Installation
-
-```bash
-go get github.com/emmybxt/go-controller
+```sh
+go get github.com/emmybxt/go-controller/v2@v2.0.0
 ```
-
-## Quick Start (5 minutes)
 
 ```go
 package main
 
 import (
+    "log"
     "net/http"
 
-    "github.com/emmybxt/go-controller/gocontroller"
+    ginadapter "github.com/emmybxt/go-controller/v2/adapters/gin"
+    "github.com/emmybxt/go-controller/v2/gocontroller"
+    "github.com/gin-gonic/gin"
 )
 
-type HealthController struct{}
+type BookService struct{}
 
-func (c *HealthController) RegisterRoutes(r *gocontroller.RouteGroup) {
-    r.GET("/health", c.Health)
+func NewBookService() *BookService { return &BookService{} }
+func (s *BookService) Title(id string) string { return "Book " + id }
+
+type BookController struct { service *BookService }
+
+func NewBookController(service *BookService) *BookController {
+    return &BookController{service: service}
 }
 
-func (c *HealthController) Health(ctx *gocontroller.Context) error {
-    return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func NewHealthController() *HealthController { return &HealthController{} }
-
-func main() {
-    app, err := gocontroller.NewApp(&gocontroller.Module{
-        Name:        "AppModule",
-        Prefix:      "/api",
-        Controllers: []any{NewHealthController},
-    })
-    if err != nil {
-        panic(err)
-    }
-
-    _ = app.Listen(":8080")
-}
-```
-
-## Core Concepts
-
-### 1) Controllers
-
-Two supported styles:
-
-1. Classic interface style:
-
-```go
-func (c *UserController) RegisterRoutes(r *gocontroller.RouteGroup) {
-    r.GET("/users/:id", c.GetByID)
-    r.POST("/users", c.Create, AuthMiddleware())
-}
-```
-
-2. Metadata style:
-
-```go
-func (c *UserController) ControllerMetadata() gocontroller.ControllerMetadata {
+func (c *BookController) ControllerMetadata() gocontroller.ControllerMetadata {
     return gocontroller.ControllerMetadata{
-        Prefix: "/users",
-        Routes: []gocontroller.RouteMetadata{
-            gocontroller.GET("/:id", "GetByID"),
-            gocontroller.POST("/", "Create", AuthMiddleware()),
+        Prefix: "/books",
+        Routes: []gocontroller.Route{
+            gocontroller.GET("/:id", c.Get),
         },
     }
 }
-```
 
-### 2) Modules
-
-Modules let you group providers/controllers and compose feature boundaries.
-
-```go
-userModule := &gocontroller.Module{
-    Name:        "UserModule",
-    Prefix:      "/users",
-    Providers:   []any{NewUserService, NewUserRepo},
-    Controllers: []any{NewUserController},
+func (c *BookController) Get(ctx *gin.Context) {
+    ctx.JSON(http.StatusOK, gin.H{
+        "title": c.service.Title(ctx.Param("id")),
+    })
 }
 
-appModule := &gocontroller.Module{
-    Name:    "AppModule",
-    Prefix:  "/api",
-    Imports: []*gocontroller.Module{userModule},
-}
-```
-
-### 3) Dependency Injection
-
-Register providers as:
-
-- concrete instances
-- constructor functions returning `T`
-- constructor functions returning `(T, error)`
-
-Dependencies are resolved recursively from constructor parameters.
-
-```go
-func NewUserService(repo *UserRepo) *UserService { ... }
-func NewUserController(svc *UserService) *UserController { ... }
-```
-
-### 4) DTO Validation
-
-Use `ParseDTO[T]` or `ctx.BindJSON(&dto)`.
-
-```go
-type CreateUserDTO struct {
-    Name  string `json:"name" validate:"required,min=2,max=50"`
-    Email string `json:"email" validate:"required,email"`
-}
-
-func (c *UserController) Create(ctx *gocontroller.Context) error {
-    dto, err := gocontroller.ParseDTO[CreateUserDTO](ctx)
+func main() {
+    router := gin.Default()
+    err := gocontroller.Mount(ginadapter.New(router), &gocontroller.Module{
+        Name:        "LibraryModule",
+        Prefix:      "/api",
+        Providers:   []any{NewBookService},
+        Controllers: []any{NewBookController},
+    })
     if err != nil {
-        return err // handled as 400 when validation fails
+        log.Fatal(err)
     }
-    return ctx.JSON(http.StatusCreated, dto)
+    log.Fatal(router.Run(":8080"))
 }
 ```
 
-Validation is powered by `go-playground/validator/v10`, so you can use its broad built-in tag set (for the pinned version in this module), including tags like:
+`GET /api/books/1` now runs through Gin. You can also register ordinary routes before or after mounting and mount into a native router group: `ginadapter.New(router.Group("/v1"))`.
 
-- `required`, `min`, `max`, `len`
-- `email`, `url`, `uri`, `hostname`
-- `uuid`, `uuid4`, `ip`, `ipv4`, `ipv6`
-- `oneof`, `startswith`, `endswith`, `contains`
-- `gt`, `gte`, `lt`, `lte`
-- `datetime`
-- `dive` for slices/maps
+## Framework adapters
 
-You can combine tags exactly as in validator syntax, e.g. `validate:"required,oneof=admin user,lowercase"`.
+Import the adapter that matches your framework's major version. All adapter paths below are relative to `github.com/emmybxt/go-controller/v2/`.
 
-### 4.1) Pluggable Validator Engine
+| Adapter | Tested framework | Native handler | Native middleware |
+| --- | --- | --- | --- |
+| `adapters/gin` | Gin 1.12.0 | `func(*gin.Context)` | `gin.HandlerFunc` |
+| `adapters/echo` | Echo 5.3.1 | `func(*echo.Context) error` | `echo.MiddlewareFunc` |
+| `adapters/echo-v4` | Echo 4.15.4 | `func(echo.Context) error` | `echo.MiddlewareFunc` |
+| `adapters/fiber` | Fiber 3.5.0 | `func(fiber.Ctx) error` | `fiber.Handler` |
+| `adapters/fiber-v2` | Fiber 2.52.15 | `func(*fiber.Ctx) error` | `fiber.Handler` |
 
-Validation is fully swappable via `gocontroller.Validator`.
+Each adapter accepts the native engine/app or a native group. Named function types with the same underlying native function signature are supported. Fiber v3's additional compatibility handler shapes are deliberately outside this adapter's interface; use its native `fiber.Handler` signature.
+
+The module configuration is the same across frameworks. Controller methods and middleware must use the selected framework's types; changing adapters alone does not convert Gin handlers into Echo handlers. Services can stay framework independent.
+
+The core `gocontroller` package imports only the standard library. Framework dependencies live in adapter packages; your binary compiles the adapters you import. The repository uses one Go module and one release version for the core and adapters.
+
+Native semantics are documented by [Gin](https://gin-gonic.com/en/docs/routing/grouping-routes/), [Echo v5](https://github.com/labstack/echo/blob/v5.3.1/echo.go), and [Fiber v3](https://docs.gofiber.io/guide/routing/).
+
+## Modules and providers
 
 ```go
-type Validator interface {
-    Validate(any) error
+root := &gocontroller.Module{
+    Name:   "AppModule",
+    Prefix: "/api",
+    Imports: []*gocontroller.Module{
+        {
+            Name:        "BooksModule",
+            Prefix:      "/v1",
+            Providers:   []any{NewBookService},
+            Controllers: []any{NewBookController},
+        },
+    },
 }
 ```
 
-Per-app override:
+Parent, imported-module, controller, and route prefixes compose: `/api` + `/v1` + `/books` + `/:id`. An empty route path addresses the prefix itself; `"/"` requests an explicit trailing slash. Native parameter, wildcard, and optional-segment syntax is passed through. Route matching, redirects, HEAD/OPTIONS behavior, and conflicts with existing host routes follow the host framework.
+
+Provider definitions can be instances, `func(...) T`, or `func(...) (T, error)`. Constructor arguments are resolved recursively. Providers are lazy singletons within one `Mount` call; unused factories are not invoked. Constructors should return a non-nil result and an optional exact `error` return. Variadic constructors are unsupported.
+
+All providers in an import graph share one scope and are registered before any controller is constructed. Provider declaration order does not matter. An exact type registration wins; an interface parameter can also resolve a single assignable concrete provider. Missing dependencies, duplicate provider types, ambiguous interface bindings, and dependency cycles return startup errors. To select an interface implementation explicitly:
 
 ```go
-app.SetValidator(myValidator)
+Providers: []any{
+    NewBookService,
+    func(service *BookService) BookReader { return service },
+}
 ```
 
-Global default override:
+Importing the same module pointer shares its provider definitions. Its controllers are mounted under each importing path, with a new controller instance for each occurrence. Reusing a route module at the same effective path produces a duplicate-route error. Separate `Mount` calls have separate provider scopes. Use one root module with imports when services should be shared.
+
+`Name` identifies a module in setup errors; it does not inject request values. Provider initialization, cleanup, and concurrency safety remain application responsibilities. There are no automatic lifecycle hooks or request-scoped services.
+
+## Native middleware
+
+Register global middleware on your framework before mounting. Module, controller, and route middleware use native functions:
 
 ```go
-gocontroller.SetDefaultValidator(myValidator)
+module.Middleware = []any{AuthMiddleware()}
+
+// Inside ControllerMetadata:
+gocontroller.POST("/", c.Create, AuditMiddleware())
 ```
 
-Function adapter:
+Execution order is host/global/group → parent module → imported module → controller → route → handler. Native `Next`, abort, and returned-error behavior is preserved. For Echo, middleware has its usual `func(echo.HandlerFunc) echo.HandlerFunc` shape.
+
+`[]any` allows the same module shape across frameworks. All official adapters validate the full batch's handler and middleware types before registration. Passing a handler name string, a nil function, or a function from the wrong framework returns an error at startup.
+
+Call `Mount` before serving requests and stop startup on any error. Provider resolution, duplicate-route checks, and handler/middleware type validation finish before registration. Native registration failures (including invalid route patterns) can occur after earlier routes have been added; discard that router. The library does not inspect or roll back the host's existing route table. Register routes in your intended priority order, particularly with Fiber's ordered routing.
+
+## Optional annotation generation
+
+Keep routes beside native controller methods without manually implementing `ControllerMetadata`:
 
 ```go
-app.SetValidator(gocontroller.ValidatorFunc(func(v any) error {
-    // call ozzo/json-schema/custom rules
-    return nil
-}))
-```
+//go:generate go run github.com/emmybxt/go-controller/v2/cmd/gocontroller-gen -dir . -out routes.gen.go
 
-Default engine is `go-playground/validator/v10` wrapped by `NewGoPlaygroundValidator()`.
-
-### 5) Middleware
-
-Attach middleware at multiple levels:
-
-- app/router (global)
-- module
-- route group
-- route
-
-```go
-r.POST("/users", c.Create, AuthMiddleware(), AuditMiddleware())
-```
-
-Middleware signature:
-
-```go
-type Middleware func(HandlerFunc) HandlerFunc
-```
-
-Built-in helpers:
-
-- `gocontroller.RequestLogger()`
-- `gocontroller.AdaptHTTPMiddleware(func(http.Handler) http.Handler)`
-- `gocontroller.RequestID()`
-- `gocontroller.Recovery(gocontroller.RecoveryConfig{...})`
-- `gocontroller.CORS(gocontroller.CORSConfig{...})`
-- `gocontroller.SecurityHeaders()`
-- `gocontroller.RequireContextValue(key, "Unauthorized")`
-
-## Annotation + Codegen (Decorator-like)
-
-If you prefer Nest-like annotations, use comments + generator.
-
-### Step 1: Annotate
-
-```go
-// @Controller("/users")
-type UserController struct{}
+// @Controller("/books")
+type BookController struct { service *BookService }
 
 // @Get("/:id")
-func (c *UserController) GetByID(ctx *gocontroller.Context) error { return nil }
-
-// @Post("/")
 // @Use(AuthMiddleware())
-func (c *UserController) Create(ctx *gocontroller.Context) error { return nil }
+func (c *BookController) Get(ctx *gin.Context) { /* native handler */ }
 ```
 
-### Step 2: Add `go:generate`
+Annotation names are case-sensitive: use `@Post`, not `@post`. Run `go generate ./...` and commit the generated `.gen.go` files. The generator emits a `ControllerMetadata()` method with bound references such as `c.Get`; there is no runtime handler-name lookup or global metadata registry. Use either generated or handwritten metadata on a controller, not both.
 
-```go
-//go:generate go run ../cmd/gocontroller-gen -dir . -out zz_gocontroller_routes.gen.go
+Supported annotations: `@Controller`, `@Use`, `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, `@Head`, `@Options`, `@Connect`, and `@Trace`. Use quoted route paths. `@Use` expressions should resolve within the same package; wrap externally imported middleware in a local helper. Nested function arguments and composite literals are supported.
+
+Discovery handles methods declared in separate files, excludes tests/generated files and files outside the active build constraints, and produces deterministic output. Within each generated controller, static segments sort ahead of parameters, then wildcards. Native framework syntax still determines matching. Generic controllers require handwritten metadata.
+
+CI can check an existing output without rewriting it:
+
+```sh
+go run ./cmd/gocontroller-gen -dir ./example -out routes.gen.go -check
 ```
 
-### Step 3: Generate
+## Run the examples locally
 
-```bash
-go generate ./example
+From this checkout, choose one server:
+
+```sh
+go generate ./...
+go run ./example        # Gin, generated metadata
+go run ./example/echo   # Echo v5, handwritten metadata
+go run ./example/fiber  # Fiber v3, handwritten metadata
 ```
 
-Generated metadata is auto-registered through `init()` and picked up by the module loader.
+Each listens on port 8080. Request `http://localhost:8080/api/books/1`. The examples share an ordinary Go service without importing a web framework into that service.
 
-### Avoid "forgot to generate" in deployments
+## Custom adapters
 
-`go build` does not run `go generate` automatically in Go.
+Implement `gocontroller.Adapter` with `Register([]gocontroller.Route) error`. `Mount` passes fully composed paths, bound handlers, and ordered middleware. Validate the full batch's native function types before registering it. Register those functions directly on your host router without introducing a request dispatcher or context wrapper.
 
-Use build wrappers that always generate first:
+## Verification
 
-```bash
-make build   # runs go generate ./... then go build ./...
-make test    # runs go generate ./... then go test ./...
-```
-
-And enforce freshness in CI:
-
-```bash
+```sh
 make verify-generated
+go test -race ./...
+go vet ./...
+go build ./...
 ```
 
-## Framework Compatibility (Gin / Echo / Fiber)
+The integration suite exercises all five adapters through real framework requests, including native groups, middleware ordering and aborts, request-local values, JSON binding, host error handling, route coexistence, and startup type rejection.
 
-Yes, it can be used with those frameworks.
-
-`gocontroller` exposes `App.Handler() http.Handler`, so you can mount it where wrappers are available.
-
-### Gin
-
-```go
-import "github.com/gin-gonic/gin"
-
-ginEngine := gin.Default()
-ginEngine.Any("/api/*any", gin.WrapH(app.Handler()))
-```
-
-### Echo
-
-```go
-import "github.com/labstack/echo/v4"
-
-e := echo.New()
-e.Any("/api/*", echo.WrapHandler(app.Handler()))
-```
-
-### Fiber
-
-```go
-import (
-    "github.com/gofiber/adaptor/v2"
-    "github.com/gofiber/fiber/v2"
-)
-
-f := fiber.New()
-f.All("/api/*", adaptor.HTTPHandler(app.Handler()))
-```
-
-Notes:
-
-- This keeps your controller/module architecture in one place.
-- If you need deep native middleware/context features of each framework, use adapters selectively at the boundary.
-
-## Web + API Composition Helpers
-
-You can avoid manual `finalHandler` path-switch logic with:
-
-- `gocontroller.WebAPIHandler(webHandler, apiHandler, opts)`
-- `gocontroller.NotFoundHTMLOrJSON(html404Path, jsonMessage)`
-- `gocontroller.ServePage(publicDir, pageFile)`
-
-Example:
-
-```go
-final := gocontroller.WebAPIHandler(webRouter, app.Handler(), gocontroller.HybridOptions{
-    WebExactPaths:              []string{"/"},
-    WebPathPrefixes:            []string{"/app", "/css/", "/js/"},
-    TreatSingleSegmentGETAsWeb: true,
-})
-```
-
-## Context Response Helpers
-
-Built-in response shortcuts on `*gocontroller.Context`:
-
-- `ctx.OK(data)`
-- `ctx.Created(data)`
-- `ctx.NoContent()`
-- `ctx.BadRequest(msg)`
-- `ctx.Unauthorized(msg)`
-- `ctx.Forbidden(msg)`
-- `ctx.NotFound(msg)`
-- `ctx.Conflict(msg)`
-- `ctx.InternalError(msg)`
-- `ctx.Success(status, data)` and `ctx.Fail(status, msg)` for envelope style
-
-## Router Improvements
-
-- Automatic `405 Method Not Allowed` + `Allow` header when path exists but method does not.
-- Wildcard routes with trailing `*`.
-
-```go
-router.GET("/assets/*", func(ctx *gocontroller.Context) error {
-    return ctx.OK(map[string]string{"path": ctx.Param("*")})
-})
-```
-
-## Standardized Errors
-
-Use `gocontroller.APIError` for consistent API error responses:
-
-```go
-return &gocontroller.APIError{
-    StatusCode: 422,
-    Code:       "validation_failed",
-    Message:    "Invalid input",
-    Details:    map[string]any{"field": "email"},
-}
-```
-
-Response shape:
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "validation_failed",
-    "message": "Invalid input",
-    "details": {"field": "email"},
-    "trace_id": "..."
-  }
-}
-```
-
-Built-in helpers:
-
-- `gocontroller.NewAPIError(status, code, message)`
-- `gocontroller.BadRequestError(...)`
-- `gocontroller.UnauthorizedError(...)`
-- `gocontroller.ForbiddenError(...)`
-- `gocontroller.NotFoundError(...)`
-- `gocontroller.ConflictError(...)`
-- `gocontroller.InternalError(...)`
-
-You can also override global route error rendering:
-
-```go
-app.SetErrorHandler(func(ctx *gocontroller.Context, err error) {
-    _ = ctx.JSON(418, map[string]any{"custom": true, "error": err.Error()})
-})
-```
-
-## Auth Context Helpers
-
-Built-ins to reduce repeated auth glue:
-
-- `RequireContextValue(key, message)` middleware
-- `ContextValue[T](ctx, key)` typed extraction
-- `MustContextValue[T](ctx, key, message)` typed extraction with unauthorized error fallback
-
-## Graceful Runtime Helpers
-
-You can run server lifecycle with context-aware graceful shutdown:
-
-```go
-ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-defer stop()
-
-err := app.Run(ctx, gocontroller.ServerOptions{
-    Addr:            ":8080",
-    ReadTimeout:     5 * time.Second,
-    WriteTimeout:    10 * time.Second,
-    IdleTimeout:     30 * time.Second,
-    ShutdownTimeout: 10 * time.Second,
-})
-```
-
-## API Surface
-
-Main types/functions:
-
-- `gocontroller.NewApp(*Module)`
-- `(*App).Listen(addr)`
-- `(*App).Handler()`
-- `(*App).SetValidator(v)` / `(*App).Validator()`
-- `(*App).Run(ctx, ServerOptions)`
-- `(*App).NewHTTPServer(ServerOptions)`
-- `(*App).SetErrorHandler(ErrorHandlerFunc)`
-- `Module{ Name, Prefix, Providers, Controllers, Imports, Middleware }`
-- `RouteGroup.GET/POST/PUT/DELETE`
-- `ParseDTO[T](ctx)`
-- `NewHTTPError(status, message)`
-- `ControllerMetadata`, `RouteMetadata`
-- `GET/POST/PUT/DELETE` metadata helpers
-- `RegisterGeneratedControllerMetadata` (used by generated code)
-- `Validator`, `ValidatorFunc`, `SetDefaultValidator`, `DefaultValidator`
-- `APIError`, `NewAPIError`, helper constructors
-- `RequestID()`, `Recovery(RecoveryConfig{})`
-- `CORS(CORSConfig{})`, `SecurityHeaders()`
-- `RequireContextValue(...)`, `ContextValue[T](...)`, `MustContextValue[T](...)`
-
-## Error Handling Behavior
-
-Default behavior:
-
-- route not found: `404`
-- validation error: `400`
-- explicit `NewHTTPError(...)`: mapped status
-- unknown handler error: `500`
-
-## Public Library Checklist
-
-Before publishing:
-
-1. Update module path in `go.mod` to your GitHub repo.
-2. Add semantic tags (`v0.1.0`, `v0.2.0`, etc.).
-3. Add CI (`go test ./...`, `go vet ./...`).
-4. Add changelog and license.
-5. Add examples for both classic and annotation styles.
-
-## License
-
-This project is licensed under the MIT License. See [LICENSE](https://github.com/emmybxt/go-controller/blob/master/LICENSE).
+MIT licensed.

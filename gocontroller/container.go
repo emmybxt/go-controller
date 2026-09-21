@@ -3,139 +3,156 @@ package gocontroller
 import (
 	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 )
 
-type providerFactory struct {
-	fn          reflect.Value
-	isLifecycle bool
-	name        string
+type provider struct {
+	value   reflect.Value
+	factory reflect.Value
 }
 
-type Container struct {
-	instances map[reflect.Type]reflect.Value
-	factories map[reflect.Type]providerFactory
-	lifecycle *LifecycleManager
-	modName   string
+type container struct {
+	providers map[reflect.Type]*provider
+	resolving map[reflect.Type]bool
 }
 
-func NewContainer() *Container {
-	return &Container{
-		instances: map[reflect.Type]reflect.Value{},
-		factories: map[reflect.Type]providerFactory{},
+func newContainer() *container {
+	return &container{
+		providers: make(map[reflect.Type]*provider),
+		resolving: make(map[reflect.Type]bool),
 	}
 }
 
-func (c *Container) WithLifecycle(lm *LifecycleManager, modName string) {
-	c.lifecycle = lm
-	c.modName = modName
-}
-
-func (c *Container) Provide(value any) error {
-	if value == nil {
-		return fmt.Errorf("nil provider")
+func (c *container) provide(def any) error {
+	v := reflect.ValueOf(def)
+	if isNil(v) {
+		return fmt.Errorf("provider is nil")
 	}
-
-	if lp, ok := value.(lifecycleProviderWrapper); ok {
-		value = lp.Provider()
-		c.modName = lp.Name()
-	}
-
-	v := reflect.ValueOf(value)
 	t := v.Type()
-
+	p := &provider{value: v}
 	if t.Kind() == reflect.Func {
-		if t.NumOut() != 1 && t.NumOut() != 2 {
-			return fmt.Errorf("provider func must return value or (value, error)")
+		if err := validateConstructor(v); err != nil {
+			return err
 		}
-		if t.NumOut() == 2 {
-			errType := t.Out(1)
-			if !errType.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-				return fmt.Errorf("second return value must be error")
-			}
-		}
-		outType := t.Out(0)
-		c.factories[outType] = providerFactory{fn: v, isLifecycle: c.lifecycle != nil, name: c.modName}
-		return nil
+		t = t.Out(0)
+		p = &provider{factory: v}
 	}
+	if _, exists := c.providers[t]; exists {
+		return fmt.Errorf("duplicate provider for %s", t)
+	}
+	c.providers[t] = p
+	return nil
+}
 
-	c.instances[t] = v
-	if c.lifecycle != nil {
-		registerInstanceLifecycle(v.Interface(), c.lifecycle, c.modName)
+func validateConstructor(fn reflect.Value) error {
+	t := fn.Type()
+	if t.IsVariadic() {
+		return fmt.Errorf("constructor %s must not be variadic", t)
+	}
+	if t.NumOut() != 1 && t.NumOut() != 2 {
+		return fmt.Errorf("constructor %s must return T or (T, error)", t)
+	}
+	if t.NumOut() == 2 && t.Out(1) != reflect.TypeFor[error]() {
+		return fmt.Errorf("constructor %s second return must be error", t)
 	}
 	return nil
 }
 
-func (c *Container) Resolve(target any) error {
-	ptr := reflect.ValueOf(target)
-	if ptr.Kind() != reflect.Pointer || ptr.IsNil() {
-		return fmt.Errorf("target must be a non-nil pointer")
-	}
-	t := ptr.Elem().Type()
-	value, err := c.resolveType(t)
+func (c *container) resolve(t reflect.Type) (reflect.Value, error) {
+	key, err := c.providerType(t)
 	if err != nil {
-		return err
+		return reflect.Value{}, err
 	}
-	ptr.Elem().Set(value)
-	return nil
+	p := c.providers[key]
+	if p.value.IsValid() {
+		return p.value, nil
+	}
+	if c.resolving[key] {
+		return reflect.Value{}, fmt.Errorf("circular provider dependency at %s", key)
+	}
+	c.resolving[key] = true
+	defer delete(c.resolving, key)
+	p.value, err = c.construct(p.factory)
+	return p.value, err
 }
 
-func (c *Container) MustResolve(target any) {
-	if err := c.Resolve(target); err != nil {
-		panic(err)
+func (c *container) providerType(t reflect.Type) (reflect.Type, error) {
+	if _, ok := c.providers[t]; ok {
+		return t, nil
 	}
-}
-
-func registerInstanceLifecycle(instance any, lifecycle *LifecycleManager, moduleName string) {
-	if lifecycle == nil {
-		return
-	}
-	switch instance.(type) {
-	case Lifecycle, LifecycleInitOnly, LifecycleDestroyOnly:
-		name := moduleName
-		if namer, ok := instance.(interface{ ModuleName() string }); ok {
-			name = namer.ModuleName()
-		}
-		lifecycle.Register(instance, name)
-	}
-}
-
-func (c *Container) resolveType(t reflect.Type) (reflect.Value, error) {
-	if v, ok := c.instances[t]; ok {
-		return v, nil
-	}
-	if t.Kind() == reflect.Interface {
-		for instType, inst := range c.instances {
-			if instType.Implements(t) {
-				return inst, nil
-			}
+	var candidates []reflect.Type
+	for candidate := range c.providers {
+		if candidate.AssignableTo(t) {
+			candidates = append(candidates, candidate)
 		}
 	}
-	factory, ok := c.factories[t]
-	if !ok {
-		return reflect.Value{}, fmt.Errorf("no provider for type %s", t.String())
+	if len(candidates) == 1 {
+		return candidates[0], nil
 	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no provider for %s", t)
+	}
+	names := make([]string, len(candidates))
+	for i, candidate := range candidates {
+		names[i] = candidate.String()
+	}
+	sort.Strings(names)
+	return nil, fmt.Errorf("ambiguous providers for %s: %s; register a constructor returning the interface explicitly", t, strings.Join(names, ", "))
+}
 
-	fnType := factory.fn.Type()
-	args := make([]reflect.Value, fnType.NumIn())
-	for i := 0; i < fnType.NumIn(); i++ {
-		argType := fnType.In(i)
-		argValue, err := c.resolveType(argType)
+func (c *container) construct(fn reflect.Value) (reflect.Value, error) {
+	args := make([]reflect.Value, fn.Type().NumIn())
+	for i := range args {
+		value, err := c.resolve(fn.Type().In(i))
 		if err != nil {
-			return reflect.Value{}, err
+			return reflect.Value{}, fmt.Errorf("constructor %s argument %d: %w", fn.Type(), i+1, err)
 		}
-		args[i] = argValue
+		args[i] = value
 	}
-
-	results := factory.fn.Call(args)
-	value := results[0]
+	results := fn.Call(args)
 	if len(results) == 2 && !results[1].IsNil() {
-		return reflect.Value{}, results[1].Interface().(error)
+		return reflect.Value{}, fmt.Errorf("constructor %s: %w", fn.Type(), results[1].Interface().(error))
 	}
-
-	c.instances[t] = value
-	if factory.isLifecycle && c.lifecycle != nil {
-		registerInstanceLifecycle(value.Interface(), c.lifecycle, factory.name)
+	if isNil(results[0]) {
+		return reflect.Value{}, fmt.Errorf("constructor %s returned nil", fn.Type())
 	}
+	return results[0], nil
+}
 
-	return value, nil
+func (c *container) controller(def any) (Controller, error) {
+	v := reflect.ValueOf(def)
+	if isNil(v) {
+		return nil, fmt.Errorf("controller is nil")
+	}
+	if v.Kind() == reflect.Func {
+		if err := validateConstructor(v); err != nil {
+			return nil, err
+		}
+		var err error
+		v, err = c.construct(v)
+		if err != nil {
+			return nil, err
+		}
+	}
+	controller, ok := v.Interface().(Controller)
+	if !ok {
+		return nil, fmt.Errorf("controller %s must implement ControllerMetadata(); for annotated controllers, run go generate", v.Type())
+	}
+	return controller, nil
+}
+
+func isNil(v reflect.Value) bool {
+	if !v.IsValid() {
+		return true
+	}
+	if v.Kind() == reflect.Interface && !v.IsNil() {
+		return isNil(v.Elem())
+	}
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }

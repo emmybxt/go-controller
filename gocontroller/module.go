@@ -3,174 +3,131 @@ package gocontroller
 import (
 	"fmt"
 	"reflect"
+	"strings"
 )
 
-type Controller interface {
-	RegisterRoutes(*RouteGroup)
-}
-
-// Module models a NestJS-like module graph.
+// Module groups controllers and providers. Imported prefixes and middleware
+// nest beneath their parent. Providers are shared singletons within one Mount.
 type Module struct {
 	Name        string
 	Prefix      string
 	Providers   []any
 	Controllers []any
 	Imports     []*Module
-	Middleware  []Middleware
+	Middleware  []any
 }
 
-type App struct {
-	Router    *Router
-	Container *Container
-	Lifecycle *LifecycleManager
-	Health    *HealthRegistry
+// Adapter registers a complete batch of routes on a host router. Implementations
+// must validate all handler and middleware types before registering any routes.
+// Routing, request execution, and errors remain the host framework's concern.
+type Adapter interface {
+	Register([]Route) error
 }
 
-// SetValidator overrides the app/router validator for request DTO validation.
-func (a *App) SetValidator(v Validator) {
-	if a == nil || a.Router == nil {
-		return
+// Mount resolves constructors, composes route metadata, and registers the result
+// on an existing router. Call it before serving requests. A native registration
+// failure can leave earlier routes mounted; discard the router on any error.
+func Mount(adapter Adapter, root *Module) error {
+	if isNil(reflect.ValueOf(adapter)) {
+		return fmt.Errorf("adapter is nil")
 	}
-	a.Router.SetValidator(v)
-}
-
-// Validator returns the validator used by the app/router.
-func (a *App) Validator() Validator {
-	if a == nil || a.Router == nil {
-		return DefaultValidator()
+	c := newContainer()
+	if err := collectProviders(root, c, make(map[*Module]bool), make(map[*Module]bool)); err != nil {
+		return err
 	}
-	return a.Router.Validator()
-}
-
-// SetMaxBodyBytes sets the maximum request body size used by Context.BindJSON.
-func (a *App) SetMaxBodyBytes(n int64) {
-	if a == nil || a.Router == nil {
-		return
+	routes, err := collectRoutes(root, c, "", nil)
+	if err != nil {
+		return err
 	}
-	a.Router.SetMaxBodyBytes(n)
-}
-
-// MaxBodyBytes returns the configured request body limit for JSON binding.
-func (a *App) MaxBodyBytes() int64 {
-	if a == nil || a.Router == nil {
-		return DefaultMaxBodyBytes
+	if err := validateRoutes(routes); err != nil {
+		return err
 	}
-	return a.Router.MaxBodyBytes()
+	return adapter.Register(routes)
 }
 
-// SetErrorHandler overrides router error rendering for this app.
-func (a *App) SetErrorHandler(h ErrorHandlerFunc) {
-	if a == nil || a.Router == nil {
-		return
-	}
-	a.Router.SetErrorHandler(h)
-}
-
-func NewApp(root *Module) (*App, error) {
-	router := NewRouter()
-	container := NewContainer()
-	lifecycle := NewLifecycleManager()
-	health := NewHealthRegistry()
-	seen := map[*Module]bool{}
-
-	if err := loadModule(root, router, container, lifecycle, health, seen); err != nil {
-		return nil, err
-	}
-
-	router.app = &App{Router: router, Container: container, Lifecycle: lifecycle, Health: health}
-	return router.app, nil
-}
-
-func loadModule(mod *Module, router *Router, container *Container, lifecycle *LifecycleManager, health *HealthRegistry, seen map[*Module]bool) error {
+func collectProviders(mod *Module, c *container, visiting, visited map[*Module]bool) error {
 	if mod == nil {
 		return fmt.Errorf("module is nil")
 	}
-	if seen[mod] {
+	if visiting[mod] {
+		return fmt.Errorf("circular module import at %q", mod.Name)
+	}
+	if visited[mod] {
 		return nil
 	}
-	seen[mod] = true
-
+	visiting[mod] = true
 	for _, imported := range mod.Imports {
-		if err := loadModule(imported, router, container, lifecycle, health, seen); err != nil {
-			return err
+		if err := collectProviders(imported, c, visiting, visited); err != nil {
+			return fmt.Errorf("module %q import: %w", mod.Name, err)
 		}
 	}
-
-	container.WithLifecycle(lifecycle, mod.Name)
-
-	for _, p := range mod.Providers {
-		if err := container.Provide(p); err != nil {
-			return fmt.Errorf("module %s provider: %w", mod.Name, err)
+	for _, def := range mod.Providers {
+		if err := c.provide(def); err != nil {
+			return fmt.Errorf("module %q provider: %w", mod.Name, err)
 		}
 	}
-
-	moduleMW := append([]Middleware{ModuleName(mod.Name)}, mod.Middleware...)
-	group := router.Group(mod.Prefix, moduleMW...)
-	for _, cdef := range mod.Controllers {
-		controller, err := instantiateController(container, cdef)
-		if err != nil {
-			return fmt.Errorf("module %s controller: %w", mod.Name, err)
-		}
-		if err := registerController(group, controller); err != nil {
-			return fmt.Errorf("module %s controller: %w", mod.Name, err)
-		}
-	}
-
+	delete(visiting, mod)
+	visited[mod] = true
 	return nil
 }
 
-func instantiateController(container *Container, def any) (any, error) {
-	if def == nil {
-		return nil, fmt.Errorf("controller definition is nil")
+func collectRoutes(mod *Module, c *container, prefix string, middleware []any) ([]Route, error) {
+	prefix = joinPath(prefix, mod.Prefix)
+	middleware = combineMiddleware(middleware, mod.Middleware)
+	var routes []Route
+	for _, def := range mod.Controllers {
+		controller, err := c.controller(def)
+		if err != nil {
+			return nil, fmt.Errorf("module %q controller: %w", mod.Name, err)
+		}
+		routes = append(routes, controllerRoutes(controller.ControllerMetadata(), prefix, middleware)...)
 	}
-
-	if c, ok := def.(Controller); ok {
-		return c, nil
-	}
-	if c, ok := def.(DecoratedController); ok {
-		return c, nil
-	}
-
-	v := reflect.ValueOf(def)
-	t := v.Type()
-	if t.Kind() != reflect.Func {
-		return nil, fmt.Errorf("controller must implement Controller/DecoratedController or be constructor function")
-	}
-	if t.NumOut() != 1 && t.NumOut() != 2 {
-		return nil, fmt.Errorf("controller constructor must return controller value or (controller value, error)")
-	}
-
-	args := make([]reflect.Value, t.NumIn())
-	for i := 0; i < t.NumIn(); i++ {
-		arg, err := container.resolveType(t.In(i))
+	for _, imported := range mod.Imports {
+		childRoutes, err := collectRoutes(imported, c, prefix, middleware)
 		if err != nil {
 			return nil, err
 		}
-		args[i] = arg
+		routes = append(routes, childRoutes...)
 	}
-
-	results := v.Call(args)
-	if len(results) == 2 && !results[1].IsNil() {
-		return nil, results[1].Interface().(error)
-	}
-
-	return results[0].Interface(), nil
+	return routes, nil
 }
 
-func registerController(group *RouteGroup, instance any) error {
-	if c, ok := instance.(Controller); ok {
-		c.RegisterRoutes(group)
-		return nil
+func controllerRoutes(meta ControllerMetadata, prefix string, middleware []any) []Route {
+	prefix = joinPath(prefix, meta.Prefix)
+	middleware = combineMiddleware(middleware, meta.Middleware)
+	routes := make([]Route, len(meta.Routes))
+	for i, route := range meta.Routes {
+		route.Path = joinPath(prefix, route.Path)
+		route.Method = strings.ToUpper(route.Method)
+		route.Middleware = combineMiddleware(middleware, route.Middleware)
+		routes[i] = route
 	}
-	if dc, ok := instance.(DecoratedController); ok {
-		return registerDecoratedController(group, instance, dc.ControllerMetadata())
+	return routes
+}
+
+func validateRoutes(routes []Route) error {
+	seen := make(map[string]bool)
+	for _, route := range routes {
+		if !validMethod(route.Method) {
+			return fmt.Errorf("invalid HTTP method %q for %s", route.Method, route.Path)
+		}
+		key := route.Method + " " + route.Path
+		if seen[key] {
+			return fmt.Errorf("duplicate route %s", key)
+		}
+		seen[key] = true
 	}
-	if meta, ok := lookupGeneratedControllerMetadata(instance); ok {
-		return registerDecoratedController(group, instance, meta)
+	return nil
+}
+
+func validMethod(method string) bool {
+	if method == "" {
+		return false
 	}
-	t := reflect.TypeOf(instance)
-	return fmt.Errorf(
-		"controller %v does not implement Controller/DecoratedController and has no generated metadata; run go generate in that package (for example: go generate ./example)",
-		t,
-	)
+	for _, ch := range method {
+		if ch < 'A' || ch > 'Z' {
+			return false
+		}
+	}
+	return true
 }
